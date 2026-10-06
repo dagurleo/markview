@@ -14,7 +14,26 @@ Markdown file in Finder and the same renderer draws the Quick Look preview.
 Only the command line tools are needed: `build.sh` calls `swiftc` directly, there
 is no Xcode project and no package. The first build takes two minutes longer, to
 compile the vendored MermaidKit and SwaTex, which are then kept in `build/modules`.
-The app is ad-hoc signed and runs on macOS 14 or later.
+The app runs on macOS 14 or later. `build.sh` signs it ad hoc, which is enough to run
+it on the machine that built it.
+
+## Releasing
+
+```sh
+scripts/release.sh
+```
+
+builds the app signed with a Developer ID certificate from the keychain (the newest,
+or the one whose SHA-1 hash is in `IDENTITY`) and the hardened runtime, has Apple
+notarize it, staples the ticket to it, and writes `build/release/Markview-<version>.zip`
+with its SHA-256. It needs notarization credentials stored once in the keychain:
+
+```sh
+xcrun notarytool store-credentials markview --apple-id <Apple ID> --team-id <team ID>
+```
+
+The version is `CFBundleShortVersionString` in `Info.plist`; the Quick Look extension
+and its service take theirs from it.
 
 ## What it does
 
@@ -61,7 +80,7 @@ The app is ad-hoc signed and runs on macOS 14 or later.
 | `Resources/` | Icons, and the vendored highlight.js and emoji list. The Quick Look extension has its own copy of the `vendor` folder |
 | `Vendor/MermaidKit/` | [MermaidKit](https://github.com/2389-research/MermaidKit) 2.2.0 (85fdc08), which draws diagrams: its `MermaidLayout` and `MermaidRender` sources as released, less `MermaidView.swift`, which needs SwiftUI. To update, copy both folders from a new release and drop that file again |
 | `Vendor/SwaTex/` | [SwaTex](https://github.com/PhraseHQ/SwaTex) 0.5.0 (2b38d0b), which draws math: its `SwaTex` sources less the docs, and from `SwaTexRender` only `DisplayListRenderer.swift`, `KaTeXFontProvider.swift` and the fonts. Markview's changes are marked `Markview:` in the code: a `Mutex` that works on macOS 14, fonts read from the app, and KaTeX's `align` spacing, `\dots`, `\tag` text and placement, and equation numbering. To update, copy the same files from a new release and carry over what `grep -rn Markview: Vendor/SwaTex` finds |
-| `scripts/` | `make-icon.swift`, which draws the app and document icons |
+| `scripts/` | `release.sh`, which builds, notarizes and zips a release, and `make-icon.swift`, which draws the app and document icons |
 | `sample/` | Documents to try: `sample.md` has a bit of everything; `text.md`, `images.md`, `tables.md`, `code.md`, `html.md`, `extensions.md`, `math.md` and `diagrams.md` each show one kind of element |
 
 ## Scripted checks

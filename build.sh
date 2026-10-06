@@ -1,8 +1,14 @@
 #!/bin/bash
 # Builds build/Markview.app. `./build.sh install` also copies it to /Applications
 # and registers its Quick Look extension.
+#
+# The app is ad-hoc signed unless SIGN names a Developer ID identity, as
+# scripts/release.sh does; then it is signed with the hardened runtime and a secure
+# timestamp, as notarization requires.
 set -euo pipefail
 cd "$(dirname "$0")"
+SIGN=${SIGN:--}
+if [ "$SIGN" = - ]; then SIGNING=(--sign -); else SIGNING=(--sign "$SIGN" --options runtime --timestamp); fi
 
 APP=build/Markview.app
 APPEX=$APP/Contents/PlugIns/MarkviewQuickLook.appex
@@ -59,11 +65,17 @@ cp Resources/vendor/* "$APPEX/Contents/Resources/vendor/"
 swiftc -O -target "$TARGET" -o "$OPENER/Contents/MacOS/LinkOpener" \
   Sources/Links.swift QuickLook/LinkOpening.swift QuickLook/LinkOpener/main.swift
 cp QuickLook/LinkOpener/Info.plist "$OPENER/Contents/"
-codesign --force --sign - "$OPENER"
-codesign --force --sign - --entitlements QuickLook/QuickLook.entitlements "$APPEX"
+# The version is kept in Info.plist alone; the extension and its service take the app's.
+for key in CFBundleShortVersionString CFBundleVersion; do
+  value=$(plutil -extract "$key" raw Info.plist)
+  for plist in "$APPEX/Contents/Info.plist" "$OPENER/Contents/Info.plist"; do plutil -replace "$key" -string "$value" "$plist"; done
+done
 
-codesign --force --sign - "$APP/Contents/Frameworks"/*.dylib
-codesign --force --sign - "$APP"
+# Signed from the inside out, each part before what contains it.
+codesign --force "${SIGNING[@]}" "$APP/Contents/Frameworks"/*.dylib
+codesign --force "${SIGNING[@]}" "$OPENER"
+codesign --force "${SIGNING[@]}" --entitlements QuickLook/QuickLook.entitlements "$APPEX"
+codesign --force "${SIGNING[@]}" "$APP"
 echo "Built $APP"
 
 if [ "${1:-}" = install ]; then
