@@ -4,36 +4,18 @@ A small native macOS viewer for Markdown. Open a `.md` file and it is shown as a
 read-only page that follows the file as it changes on disk. Press Space on a
 Markdown file in Finder and the same renderer draws the Quick Look preview.
 
-## Build and install
+![Markview showing its sample document, with a search under way](sample/screenshot.png)
+
+## Install
 
 ```sh
-./build.sh            # builds build/Markview.app
-./build.sh install    # copies it to /Applications and registers the Quick Look extension
+brew install --cask dagurleo/tap/markview
 ```
 
-Only the command line tools are needed: `build.sh` calls `swiftc` directly, there
-is no Xcode project and no package. The first build takes two minutes longer, to
-compile the vendored MermaidKit and SwaTex, which are then kept in `build/modules`.
-The app runs on macOS 14 or later. `build.sh` signs it ad hoc, which is enough to run
-it on the machine that built it.
-
-## Releasing
-
-```sh
-scripts/release.sh
-```
-
-builds the app signed with a Developer ID certificate from the keychain (the newest,
-or the one whose SHA-1 hash is in `IDENTITY`) and the hardened runtime, has Apple
-notarize it, staples the ticket to it, and writes `build/release/Markview-<version>.zip`
-with its SHA-256. It needs notarization credentials stored once in the keychain:
-
-```sh
-xcrun notarytool store-credentials markview --apple-id <Apple ID> --team-id <team ID>
-```
-
-The version is `CFBundleShortVersionString` in `Info.plist`; the Quick Look extension
-and its service take theirs from it.
+or download `Markview-<version>.dmg` from [Releases](https://github.com/dagurleo/markview/releases)
+and drag Markview to Applications. It is signed and notarized, and runs on macOS 14
+or later. Open it once so that macOS picks up its Quick Look preview; "Make Default
+Markdown Viewer" in the Markview menu has Markdown files open in it.
 
 ## What it does
 
@@ -70,6 +52,48 @@ and its service take theirs from it.
 - Large files show their beginning at once and finish rendering in the
   background.
 
+## Limitations
+
+- Math is not searchable, and diagrams are not interactive.
+- Diagrams follow Mermaid's syntax but MermaidKit's look, not Mermaid's. A few
+  things come out imperfectly: hexagon nodes, thick arrows, class stereotypes and
+  multiplicities, and dates on a Gantt chart's axis.
+- Long code lines wrap (the continuation is indented) instead of scrolling sideways.
+- HTML support covers the common README elements; other tags are dropped and
+  their text kept.
+
+## Building
+
+```sh
+./build.sh            # builds build/Markview.app
+./build.sh install    # copies it to /Applications and registers the Quick Look extension
+```
+
+Only the command line tools are needed: `build.sh` calls `swiftc` directly, there
+is no Xcode project and no package. The first build takes two minutes longer, to
+compile the vendored MermaidKit and SwaTex, which are then kept in `build/modules`.
+The app runs on macOS 14 or later. `build.sh` signs it ad hoc, which is enough to run
+it on the machine that built it.
+
+## Releasing
+
+```sh
+scripts/release.sh
+```
+
+builds the app signed with a Developer ID certificate from the keychain (the newest,
+or the one whose SHA-1 hash is in `IDENTITY`) and the hardened runtime, has Apple
+notarize it and staples the ticket to it. It writes `build/release/Markview-<version>.zip`
+for the Homebrew cask and `Markview-<version>.dmg` for downloading, both notarized,
+with their SHA-256. It needs notarization credentials stored once in the keychain:
+
+```sh
+xcrun notarytool store-credentials markview --apple-id <Apple ID> --team-id <team ID>
+```
+
+The version is `CFBundleShortVersionString` in `Info.plist`; the Quick Look extension
+and its service take theirs from it.
+
 ## Layout
 
 | Folder | Contents |
@@ -102,12 +126,11 @@ also exports the page as a PDF.
 `-pageZoom 1.5` after the file argument sets the zoom for that launch. The Quick
 Look extension can be tried with `qlmanage -p file.md` once the app is installed.
 
-## Limitations
+## Licence
 
-- Math is not searchable, and diagrams are not interactive.
-- Diagrams follow Mermaid's syntax but MermaidKit's look, not Mermaid's. A few
-  things come out imperfectly: hexagon nodes, thick arrows, class stereotypes and
-  multiplicities, and dates on a Gantt chart's axis.
-- Long code lines wrap (the continuation is indented) instead of scrolling sideways.
-- HTML support covers the common README elements; other tags are dropped and
-  their text kept.
+Markview is under the MIT licence; see [LICENSE](LICENSE). It is built with
+[SwaTex](https://github.com/PhraseHQ/SwaTex) (MIT) and KaTeX's fonts (SIL Open Font
+Licence 1.1), [MermaidKit](https://github.com/2389-research/MermaidKit) (MIT),
+[highlight.js](https://highlightjs.org) (BSD 3-Clause) and the shortcode table of
+[gemoji](https://github.com/github/gemoji) (MIT). Their licences are next to them in
+`Vendor/` and `Resources/vendor/`, and the app's About window gives them all in full.

@@ -49,6 +49,17 @@ cp Info.plist "$APP/Contents/"
 cp -R Resources/. "$APP/Contents/Resources/"
 # SwaTex's KaTeX fonts, which the extension reads from the app too.
 cp -R Vendor/SwaTex/SwaTexRender/Resources/Fonts "$APP/Contents/Resources/"
+# The About window credits what Markview is built with, and gives each licence in full.
+{
+  echo "Markview is built with SwaTex, which draws math in KaTeX's fonts; MermaidKit, which draws diagrams; highlight.js, which colours code; and gemoji's emoji shortcodes. Their licences and Markview's follow."
+  for notice in "Markview|LICENSE" "SwaTex|Vendor/SwaTex/LICENSE" "KaTeX's fonts|Vendor/SwaTex/SwaTexRender/Resources/Fonts/OFL.txt" \
+                "MermaidKit|Vendor/MermaidKit/LICENSE" "highlight.js|Resources/vendor/highlight.js-LICENSE.txt" \
+                "gemoji|Resources/vendor/gemoji-LICENSE.txt"; do
+    printf '\n\n%s\n\n' "${notice%%|*}"
+    cat "${notice#*|}"
+  done
+} > build/Credits.txt
+textutil -convert rtf -font HelveticaNeue -fontsize 10 build/Credits.txt -output "$APP/Contents/Resources/Credits.rtf"
 
 # The Quick Look preview (Space in Finder) is an app extension. It shows a
 # document the same way the app does: with everything in Native/ except the

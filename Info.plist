@@ -22,6 +22,8 @@
 	<string>14.0</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 Dagur Leó Bergsson. MIT licence.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSPrincipalClass</key>

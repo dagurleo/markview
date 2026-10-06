@@ -1,6 +1,7 @@
 #!/bin/bash
-# Builds Markview for release: signed with Developer ID, notarized by Apple and stapled,
-# then zipped as build/release/Markview-<version>.zip, with its SHA-256 for a Homebrew cask.
+# Builds Markview for release: signed with Developer ID, notarized by Apple and stapled.
+# Writes build/release/Markview-<version>.zip, with its SHA-256 for the Homebrew cask, and
+# Markview-<version>.dmg, a disk image with a link to Applications for downloading by hand.
 #
 # Needs a "Developer ID Application" certificate in the keychain (the newest is used,
 # or set IDENTITY to its SHA-1 hash) and notarytool credentials stored once as the
@@ -31,30 +32,50 @@ IDENTITY=${IDENTITY:-$(newest_identity)}
 if [ -z "$IDENTITY" ]; then echo "No Developer ID Application certificate in the keychain" >&2; exit 1; fi
 echo "Signing Markview $VERSION with $(security find-identity -v -p codesigning | awk -v hash="$IDENTITY" '$2 == hash' | cut -d'"' -f2) ($IDENTITY)"
 
+# Has Apple's notary service check a file, and stops with its log if it is not accepted.
+notarize() {
+  echo "Submitting $(basename "$1") to Apple's notary service; this usually takes a minute or two"
+  if ! xcrun notarytool submit "$1" --keychain-profile "$PROFILE" --wait --output-format json > "$OUT/notarization.json"; then
+    cat "$OUT/notarization.json" >&2
+    exit 1
+  fi
+  local status id
+  status=$(plutil -extract status raw "$OUT/notarization.json")
+  id=$(plutil -extract id raw "$OUT/notarization.json")
+  if [ "$status" != Accepted ]; then
+    echo "Notarization $status; Apple's log follows" >&2
+    xcrun notarytool log "$id" --keychain-profile "$PROFILE" >&2
+    exit 1
+  fi
+  rm "$OUT/notarization.json"
+}
+
 SIGN=$IDENTITY ./build.sh
 codesign --verify --deep --strict "$APP"
+rm -rf "$OUT"
+mkdir -p "$OUT"
 
 # Apple checks a zip of the app; the ticket it issues is then stapled to the app itself,
 # so the app opens without a network check, and the stapled app is zipped again.
-rm -rf "$OUT"
-mkdir -p "$OUT"
 ditto -c -k --keepParent "$APP" "$OUT/Markview-notarize.zip"
-echo "Submitting to Apple's notary service; this usually takes a few minutes"
-if ! xcrun notarytool submit "$OUT/Markview-notarize.zip" --keychain-profile "$PROFILE" --wait --output-format json > "$OUT/notarization.json"; then
-  cat "$OUT/notarization.json" >&2
-  exit 1
-fi
-status=$(plutil -extract status raw "$OUT/notarization.json")
-id=$(plutil -extract id raw "$OUT/notarization.json")
-if [ "$status" != Accepted ]; then
-  echo "Notarization $status; Apple's log follows" >&2
-  xcrun notarytool log "$id" --keychain-profile "$PROFILE" >&2
-  exit 1
-fi
+notarize "$OUT/Markview-notarize.zip"
 rm "$OUT/Markview-notarize.zip"
 xcrun stapler staple "$APP"
 spctl --assess --type execute --verbose=2 "$APP"
-
 ditto -c -k --keepParent "$APP" "$OUT/Markview-$VERSION.zip"
-echo "Released $OUT/Markview-$VERSION.zip"
-echo "SHA-256 $(shasum -a 256 "$OUT/Markview-$VERSION.zip" | cut -d' ' -f1)"
+
+# The disk image holds the stapled app and a link to Applications to drag it onto. It is
+# signed and notarized too, so that opening it raises no warning either.
+STAGE=$(mktemp -d)
+ditto "$APP" "$STAGE/Markview.app"
+ln -s /Applications "$STAGE/Applications"
+hdiutil create -quiet -volname "Markview $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO "$OUT/Markview-$VERSION.dmg"
+rm -rf "$STAGE"
+codesign --sign "$IDENTITY" --timestamp "$OUT/Markview-$VERSION.dmg"
+notarize "$OUT/Markview-$VERSION.dmg"
+xcrun stapler staple "$OUT/Markview-$VERSION.dmg"
+spctl --assess --type open --context context:primary-signature --verbose=2 "$OUT/Markview-$VERSION.dmg"
+
+for file in "$OUT/Markview-$VERSION.zip" "$OUT/Markview-$VERSION.dmg"; do
+  echo "Released $file  SHA-256 $(shasum -a 256 "$file" | cut -d' ' -f1)"
+done
