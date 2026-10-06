@@ -92,7 +92,13 @@ xcrun notarytool store-credentials markview --apple-id <Apple ID> --team-id <tea
 ```
 
 The version is `CFBundleShortVersionString` in `Info.plist`; the Quick Look extension
-and its service take theirs from it.
+and its service take theirs from it. To publish a release, attach both files to it on
+GitHub, then give the cask in [dagurleo/homebrew-tap](https://github.com/dagurleo/homebrew-tap)
+the new `version` and the zip's `sha256`:
+
+```sh
+gh release create v<version> build/release/Markview-<version>.dmg build/release/Markview-<version>.zip
+```
 
 ## Layout
 
