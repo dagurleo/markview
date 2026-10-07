@@ -4,6 +4,29 @@ import AppKit
 /// also accepts files dropped on it.
 final class ColumnTextView: NSTextView {
     var onDrop: ([URL]) -> Void = { _ in }
+    /// Whether the text has drawings (see NativeRenderer.drawing). Finding them in a large document takes a while.
+    private(set) var hasDrawings = false
+    /// The text container width the drawings were last fitted to.
+    private var drawingsWidth = Theme.columnWidth
+
+    /// Called with new text, whose drawings the renderer fitted to a full column.
+    func textChanged(hasDrawings: Bool) {
+        self.hasDrawings = hasDrawings
+        drawingsWidth = Theme.columnWidth
+        fitDrawings()
+    }
+
+    /// A window narrower than the column narrows the column, and the drawings with it.
+    private func fitDrawings() {
+        guard hasDrawings, let storage = textStorage, let width = textContainer?.size.width, width != drawingsWidth else { return }
+        drawingsWidth = width
+        NativeRenderer.fitDrawings(in: storage, width: width)
+    }
+
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        fitDrawings()
+    }
 
     override func setFrameSize(_ newSize: NSSize) {
         let clip = enclosingScrollView?.contentView
@@ -11,6 +34,8 @@ final class ColumnTextView: NSTextView {
         let inset = NSSize(width: max(40, floor((newSize.width - Theme.columnWidth) / 2)), height: 24)
         if inset != textContainerInset { textContainerInset = inset }
         super.setFrameSize(newSize)
+        // A large document's drawings wait for the end of a resize: finding them takes too long to do at every step.
+        if !inLiveResize || (textStorage?.length ?? 0) < 1_000_000 { fitDrawings() }
         // When its width changes the text view keeps its first line in place, which at
         // the top of a document scrolls the margin above that line out of sight.
         if atTop, let clip, clip.bounds.origin.y != 0 {
@@ -248,6 +273,7 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         // misplaces boxed blocks after a resize, so ordinary documents do without it.
         layout.allowsNonContiguousLayout = rendered.length > 1_000_000
         layout.replaceTextStorage(NSTextStorage(attributedString: rendered))
+        textView.textChanged(hasDrawings: renderer?.hasDrawings ?? false)
         anchors = renderer?.anchors ?? [:]
         headings = renderer?.headings ?? []
         if keepingPlace, top > 0 {

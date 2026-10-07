@@ -34,6 +34,13 @@ A wide one spans the column and wraps its cells:
 | Image | ![icon](icon.png) |
 | Line break | first line<br>second line |
 
+An empty cell keeps its place, the corner of a comparison too:
+
+| | Small | Large |
+|---|:-:|:-:|
+| Fits in a bag | ✓ | |
+| Needs a van | | ✓ |
+
 ## In quotes and alerts
 
 > A quoted table:

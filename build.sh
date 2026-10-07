@@ -39,22 +39,48 @@ build_module Vendor/SwaTex SwaTexRender SwaTex
 LIBRARIES=(MermaidLayout MermaidRender SwaTex SwaTexRender)
 LINK="-I $MODULES -L $MODULES $(printf -- '-l%s ' "${LIBRARIES[@]}")"
 
+# The app updates itself with Sparkle (sparkle-project.org), downloaded once at a fixed
+# version and checked against the SHA-256 that Sparkle's release on GitHub gives.
+# scripts/release.sh uses its tools to sign each update.
+SPARKLE_VERSION=2.10.0
+SPARKLE_SHA256=c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c
+SPARKLE=build/Sparkle-$SPARKLE_VERSION
+if [ ! -d "$SPARKLE" ]; then
+  echo "Downloading Sparkle $SPARKLE_VERSION"
+  archive=$(mktemp)
+  curl -fsSL -o "$archive" "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
+  if ! echo "$SPARKLE_SHA256  $archive" | shasum -a 256 -c --status; then
+    echo "Sparkle's download does not match its SHA-256" >&2
+    rm "$archive"
+    exit 1
+  fi
+  mkdir -p "$SPARKLE.partial"
+  tar -xf "$archive" -C "$SPARKLE.partial" Sparkle.framework bin LICENSE
+  rm "$archive"
+  mv "$SPARKLE.partial" "$SPARKLE"
+fi
+
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks" \
   "$APPEX/Contents/MacOS" "$APPEX/Contents/Resources/vendor" "$OPENER/Contents/MacOS"
-swiftc -O -target "$TARGET" $LINK -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
+swiftc -O -target "$TARGET" $LINK -F "$SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   -o "$APP/Contents/MacOS/Markview" Sources/*.swift Native/*.swift
 for library in "${LIBRARIES[@]}"; do cp "$MODULES/lib$library.dylib" "$APP/Contents/Frameworks/"; done
+# Sparkle's XPC services are only for sandboxed apps, which Markview is not, so they are
+# left out, as Sparkle's documentation allows; so are its headers, as Xcode would.
+SPARKLE_IN_APP=$APP/Contents/Frameworks/Sparkle.framework
+ditto "$SPARKLE/Sparkle.framework" "$SPARKLE_IN_APP"
+for part in XPCServices Headers PrivateHeaders Modules; do rm -rf "${SPARKLE_IN_APP:?}/$part" "$SPARKLE_IN_APP/Versions/B/$part"; done
 cp Info.plist "$APP/Contents/"
 cp -R Resources/. "$APP/Contents/Resources/"
 # SwaTex's KaTeX fonts, which the extension reads from the app too.
 cp -R Vendor/SwaTex/SwaTexRender/Resources/Fonts "$APP/Contents/Resources/"
 # The About window credits what Markview is built with, and gives each licence in full.
 {
-  echo "Markview is built with SwaTex, which draws math in KaTeX's fonts; MermaidKit, which draws diagrams; highlight.js, which colours code; and gemoji's emoji shortcodes. Their licences and Markview's follow."
+  echo "Markview is built with SwaTex, which draws math in KaTeX's fonts; MermaidKit, which draws diagrams; highlight.js, which colours code; gemoji's emoji shortcodes; and Sparkle, which keeps it up to date. Their licences and Markview's follow."
   for notice in "Markview|LICENSE" "SwaTex|Vendor/SwaTex/LICENSE" "KaTeX's fonts|Vendor/SwaTex/SwaTexRender/Resources/Fonts/OFL.txt" \
                 "MermaidKit|Vendor/MermaidKit/LICENSE" "highlight.js|Resources/vendor/highlight.js-LICENSE.txt" \
-                "gemoji|Resources/vendor/gemoji-LICENSE.txt"; do
+                "gemoji|Resources/vendor/gemoji-LICENSE.txt" "Sparkle|$SPARKLE/LICENSE"; do
     printf '\n\n%s\n\n' "${notice%%|*}"
     cat "${notice#*|}"
   done
@@ -84,6 +110,8 @@ done
 
 # Signed from the inside out, each part before what contains it.
 codesign --force "${SIGNING[@]}" "$APP/Contents/Frameworks"/*.dylib
+codesign --force "${SIGNING[@]}" "$SPARKLE_IN_APP/Versions/B/Autoupdate" "$SPARKLE_IN_APP/Versions/B/Updater.app"
+codesign --force "${SIGNING[@]}" "$SPARKLE_IN_APP"
 codesign --force "${SIGNING[@]}" "$OPENER"
 codesign --force "${SIGNING[@]}" --entitlements QuickLook/QuickLook.entitlements "$APPEX"
 codesign --force "${SIGNING[@]}" "$APP"

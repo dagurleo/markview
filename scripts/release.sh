@@ -1,19 +1,32 @@
 #!/bin/bash
 # Builds Markview for release: signed with Developer ID, notarized by Apple and stapled.
-# Writes build/release/Markview-<version>.zip, with its SHA-256 for the Homebrew cask, and
-# Markview-<version>.dmg, a disk image with a link to Applications for downloading by hand.
+# Writes to build/release:
+#   Markview-<version>.zip  the app, for the Homebrew cask (its SHA-256 is printed) and for Sparkle
+#   Markview-<version>.dmg  a disk image with a link to Applications, for downloading by hand
+#   appcast.xml             what tells installed copies about the new version
+#   notes.md                the version's section of CHANGELOG.md, for the GitHub release
 #
 # Needs a "Developer ID Application" certificate in the keychain (the newest is used,
-# or set IDENTITY to its SHA-1 hash) and notarytool credentials stored once as the
+# or set IDENTITY to its SHA-1 hash), notarytool credentials stored once as the
 # "markview" profile:
 #   xcrun notarytool store-credentials markview --apple-id <Apple ID> --team-id <team ID>
+# and Sparkle's signing key in the keychain, made once with
+#   build/Sparkle-<Sparkle version>/bin/generate_keys --account markview
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PROFILE=${PROFILE:-markview}
 VERSION=$(plutil -extract CFBundleShortVersionString raw Info.plist)
+BUILD=$(plutil -extract CFBundleVersion raw Info.plist)
 OUT=build/release
 APP=build/Markview.app
+REPOSITORY=https://github.com/dagurleo/markview
+SPARKLE=build/Sparkle-$(sed -n 's/^SPARKLE_VERSION=//p' build.sh)
+SPARKLE_KEY=markview
+
+# What changed, shown in the update window and on the GitHub release.
+NOTES=$(awk -v version="$VERSION" '/^## / {found = ($2 == version); next} found' CHANGELOG.md | sed '/./,$!d')
+if [ -z "$NOTES" ]; then echo "CHANGELOG.md has no section for $VERSION" >&2; exit 1; fi
 
 # The newest valid Developer ID Application identity, as a hash: codesign takes a hash
 # even when two certificates share a name, as a renewed one does.
@@ -64,6 +77,31 @@ xcrun stapler staple "$APP"
 spctl --assess --type execute --verbose=2 "$APP"
 ditto -c -k --keepParent "$APP" "$OUT/Markview-$VERSION.zip"
 
+# Installed copies read appcast.xml from $REPOSITORY/releases/latest/download (SUFeedURL), so it
+# is attached to every release and describes that version alone. Sparkle checks both the zip
+# and the appcast against the public half of the key, which is in Info.plist.
+ENCLOSURE=$("$SPARKLE/bin/sign_update" --account "$SPARKLE_KEY" "$OUT/Markview-$VERSION.zip")
+cat > "$OUT/appcast.xml" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Markview</title>
+    <link>$REPOSITORY</link>
+    <item>
+      <title>Markview $VERSION</title>
+      <pubDate>$(LC_ALL=C date -u "+%a, %d %b %Y %H:%M:%S +0000")</pubDate>
+      <sparkle:version>$BUILD</sparkle:version>
+      <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>$(plutil -extract LSMinimumSystemVersion raw Info.plist)</sparkle:minimumSystemVersion>
+      <description sparkle:format="markdown"><![CDATA[$NOTES]]></description>
+      <enclosure url="$REPOSITORY/releases/download/v$VERSION/Markview-$VERSION.zip" type="application/octet-stream" $ENCLOSURE/>
+    </item>
+  </channel>
+</rss>
+EOF
+"$SPARKLE/bin/sign_update" --account "$SPARKLE_KEY" "$OUT/appcast.xml"
+printf '%s\n' "$NOTES" > "$OUT/notes.md"
+
 # The disk image holds the stapled app and a link to Applications to drag it onto. It is
 # signed and notarized too, so that opening it raises no warning either.
 STAGE=$(mktemp -d)
@@ -79,3 +117,4 @@ spctl --assess --type open --context context:primary-signature --verbose=2 "$OUT
 for file in "$OUT/Markview-$VERSION.zip" "$OUT/Markview-$VERSION.dmg"; do
   echo "Released $file  SHA-256 $(shasum -a 256 "$file" | cut -d' ' -f1)"
 done
+echo "Wrote $OUT/appcast.xml and $OUT/notes.md"

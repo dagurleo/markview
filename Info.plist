@@ -28,6 +28,14 @@
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/dagurleo/markview/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>EwsoBKDZqZYN4SkvF8/emcl6wcczekYOWWCoJmzBXf4=</string>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>SURequireSignedFeed</key>
+	<true/>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

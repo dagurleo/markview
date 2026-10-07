@@ -1,8 +1,15 @@
 import Cocoa
+import Sparkle
 import UniformTypeIdentifiers
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
     private static let markdown = UTType("net.daringfireball.markdown")
+
+    /// Sparkle reads the appcast attached to the newest release (SUFeedURL in Info.plist), and on
+    /// the second launch asks whether to look for updates by itself. Scripted checks leave it
+    /// stopped, so that a test run neither asks nor looks.
+    private let updater = SPUStandardUpdaterController(
+        startingUpdater: ProcessInfo.processInfo.environment["MARKVIEW_SNAPSHOT"] == nil, updaterDelegate: nil, userDriverDelegate: nil)
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = makeMainMenu()
@@ -46,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
         let app = submenu("Markview")
         app.add("About Markview", #selector(NSApplication.orderFrontStandardAboutPanel(_:)))
+        app.add("Check for Updates…", #selector(SPUStandardUpdaterController.checkForUpdates(_:))).target = updater
         app.addItem(.separator())
         app.add("Make Default Markdown Viewer", #selector(makeDefaultViewer(_:))).target = self
         app.addItem(.separator())

@@ -93,6 +93,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     /// the window shows, so what prints does not depend on the window's size or appearance.
     private func pageForPrinting() -> NSTextView {
         let storage = NSTextStorage(attributedString: markdownView.textView.attributedString())
+        if markdownView.textView.hasDrawings { NativeRenderer.fitDrawings(in: storage, width: Theme.columnWidth) }
         let layout = BoxedLayoutManager()
         storage.addLayoutManager(layout)
         let width = Theme.columnWidth + 48

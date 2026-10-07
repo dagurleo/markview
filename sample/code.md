@@ -70,6 +70,22 @@ let configuration = URLSessionConfiguration.default; configuration.timeoutInterv
 let short = 1
 ```
 
+## Drawings
+
+A block drawn with box-drawing characters never wraps. It shrinks until its widest
+line fits, and characters from other fonts take the columns a terminal gives them:
+
+```
+┌──────────┐       ┌───────────────────────────┐       ┌────────────────────────┐       ┌──────────┐
+│ browser  │  ──►  │ edge: routes, rate limits │  ──►  │ origin: queue consumer │  ──►  │ Postgres │
+└──────────┘       └───────────────────────────┘       └────────────────────────┘       └──────────┘
+                                                                    │
+                                                                    ▼
+                                                       ┌────────────────────────┐
+                                                       │ 日本語 and 😀 line up  │
+                                                       └────────────────────────┘
+```
+
 ## In lists and quotes
 
 1. Build it:

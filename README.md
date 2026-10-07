@@ -17,6 +17,10 @@ and drag Markview to Applications. It is signed and notarized, and runs on macOS
 or later. Open it once so that macOS picks up its Quick Look preview; "Make Default
 Markdown Viewer" in the Markview menu has Markdown files open in it.
 
+Markview updates itself through [Sparkle](https://sparkle-project.org). On its second
+launch it asks whether to check for updates automatically; "Check for Updates…" in the
+Markview menu checks at any time. Version 0.1.0 predates this and is updated by hand once.
+
 ## What it does
 
 - Renders Markdown with Foundation's parser and TextKit, with no web view:
@@ -59,6 +63,8 @@ Markdown Viewer" in the Markview menu has Markdown files open in it.
   things come out imperfectly: hexagon nodes, thick arrows, class stereotypes and
   multiplicities, and dates on a Gantt chart's axis.
 - Long code lines wrap (the continuation is indented) instead of scrolling sideways.
+  Drawings made with box-drawing characters never wrap; they shrink to fit the
+  column instead, so a very wide one comes out small.
 - HTML support covers the common README elements; other tags are dropped and
   their text kept.
 
@@ -71,7 +77,8 @@ Markdown Viewer" in the Markview menu has Markdown files open in it.
 
 Only the command line tools are needed: `build.sh` calls `swiftc` directly, there
 is no Xcode project and no package. The first build takes two minutes longer, to
-compile the vendored MermaidKit and SwaTex, which are then kept in `build/modules`.
+compile the vendored MermaidKit and SwaTex, which are then kept in `build/modules`,
+and downloads Sparkle 2.10.0 into `build/`, checked against its published SHA-256.
 The app runs on macOS 14 or later. `build.sh` signs it ad hoc, which is enough to run
 it on the machine that built it.
 
@@ -83,22 +90,36 @@ scripts/release.sh
 
 builds the app signed with a Developer ID certificate from the keychain (the newest,
 or the one whose SHA-1 hash is in `IDENTITY`) and the hardened runtime, has Apple
-notarize it and staples the ticket to it. It writes `build/release/Markview-<version>.zip`
-for the Homebrew cask and `Markview-<version>.dmg` for downloading, both notarized,
-with their SHA-256. It needs notarization credentials stored once in the keychain:
+notarize it and staples the ticket to it. It writes to `build/release`:
+`Markview-<version>.zip` for the Homebrew cask and for Sparkle, `Markview-<version>.dmg`
+for downloading (both notarized, with their SHA-256), `appcast.xml`, which tells
+installed copies about the version, and `notes.md`, the version's section of
+[CHANGELOG.md](CHANGELOG.md). The zip and the appcast are signed with Sparkle's key.
+The script needs notarization credentials and that key stored once in the keychain:
 
 ```sh
 xcrun notarytool store-credentials markview --apple-id <Apple ID> --team-id <team ID>
+build/Sparkle-2.10.0/bin/generate_keys --account markview   # prints the public key for SUPublicEDKey
 ```
 
-The version is `CFBundleShortVersionString` in `Info.plist`; the Quick Look extension
-and its service take theirs from it. To publish a release, attach both files to it on
-GitHub, then give the cask in [dagurleo/homebrew-tap](https://github.com/dagurleo/homebrew-tap)
-the new `version` and the zip's `sha256`:
+Keep a copy of the key (`generate_keys --account markview -x <file>` exports it):
+without it, installed copies cannot take another update.
+
+The version is `CFBundleShortVersionString` in `Info.plist` and the build number
+`CFBundleVersion`, which Sparkle compares and so must go up with every release; the
+Quick Look extension and its service take theirs from them. Write the version's
+section of `CHANGELOG.md` first: the script stops without one. To publish a release,
+attach the files to it on GitHub, then give the cask in
+[dagurleo/homebrew-tap](https://github.com/dagurleo/homebrew-tap) the new `version` and
+the zip's `sha256`:
 
 ```sh
-gh release create v<version> build/release/Markview-<version>.dmg build/release/Markview-<version>.zip
+gh release create v<version> build/release/Markview-<version>.dmg build/release/Markview-<version>.zip \
+  build/release/appcast.xml --notes-file build/release/notes.md
 ```
+
+Installed copies read the appcast from `releases/latest/download/appcast.xml`
+(`SUFeedURL`), so the newest release must carry one.
 
 ## Layout
 
@@ -137,6 +158,7 @@ Look extension can be tried with `qlmanage -p file.md` once the app is installed
 Markview is under the MIT licence; see [LICENSE](LICENSE). It is built with
 [SwaTex](https://github.com/PhraseHQ/SwaTex) (MIT) and KaTeX's fonts (SIL Open Font
 Licence 1.1), [MermaidKit](https://github.com/2389-research/MermaidKit) (MIT),
-[highlight.js](https://highlightjs.org) (BSD 3-Clause) and the shortcode table of
-[gemoji](https://github.com/github/gemoji) (MIT). Their licences are next to them in
-`Vendor/` and `Resources/vendor/`, and the app's About window gives them all in full.
+[highlight.js](https://highlightjs.org) (BSD 3-Clause), the shortcode table of
+[gemoji](https://github.com/github/gemoji) (MIT) and [Sparkle](https://sparkle-project.org)
+(MIT, and the BSD and zlib-style licences of code it includes). Their licences are next to them in `Vendor/`,
+`Resources/vendor/` and Sparkle's download, and the app's About window gives them all in full.

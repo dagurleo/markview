@@ -11,6 +11,8 @@ final class NativeRenderer {
     private(set) var remoteImages: [(attachment: NSTextAttachment, url: URL, width: CGFloat?, height: CGFloat?)] = []
     /// Diagrams still to be drawn, in the order their placeholders appear. Math is drawn as it is rendered.
     private(set) var diagrams: [Diagram] = []
+    /// Whether any code block is a drawing, which the view fits to its column (see `drawing`).
+    private(set) var hasDrawings = false
 
     private typealias Piece = (run: AttributedString.Runs.Run, text: String)
 
@@ -72,6 +74,12 @@ final class NativeRenderer {
     private var htmlAlignments: [NSTextAlignment?] = []
     private var cells: [ObjectIdentifier: [NSTextTableBlock]] = [:]
     private var spans: [ObjectIdentifier: [(column: Int, count: Int, width: CGFloat)]] = [:]
+    /// The Markdown table being written and its last cell, so that empty cells can be filled in.
+    private struct OpenTable {
+        let id: Int, columns: [PresentationIntent.TableColumn], quotes: [NSTextBlock], alert: NSColor?
+        var row = 0, column = -1
+    }
+    private var openTable: OpenTable?
     private var formulas: [MarkdownExtensions.Formula] = []
     /// The last equation number used, so that equations number on through the document.
     private var equations = 0
@@ -124,6 +132,7 @@ final class NativeRenderer {
             block.append((run, text(index)))
         }
         if !block.isEmpty { append(block) }
+        finishTable()
         fitTables()
         engine = nil   // the JavaScript engine only lives for one render
         return output
@@ -187,6 +196,15 @@ final class NativeRenderer {
             default: break
             }
         }
+        if let table {
+            if openTable?.id != table.id {
+                finishTable()
+                openTable = OpenTable(id: table.id, columns: table.columns, quotes: quotes, alert: alert)
+            }
+            fillCells(upTo: isHeaderRow ? 0 : row, column)
+        } else {
+            finishTable()
+        }
 
         // The parser hands raw HTML blocks over untouched.
         if pieces[0].run.inlinePresentationIntent?.contains(.blockHTML) == true {
@@ -209,17 +227,7 @@ final class NativeRenderer {
 
         var paragraph = Paragraph(quotes: quotes)
         if case .header(let level) = leaf.kind { paragraph.heading = min(max(level, 1), 6) }
-        if let table {
-            let textTable = self.textTable(table.id, columns: table.columns.count, inside: quotes, alert: alert)
-            paragraph.cell = cellBlock(textTable, row: isHeaderRow ? 0 : row, column: column, header: isHeaderRow)
-            if column < table.columns.count {
-                switch table.columns[column].alignment {
-                case .center: paragraph.alignment = .center
-                case .right: paragraph.alignment = .right
-                default: paragraph.alignment = isHeaderRow ? .center : .left
-                }
-            }
-        }
+        if let openTable, table != nil { paragraph = cell(of: openTable, row: isHeaderRow ? 0 : row, column: column) }
         if paragraph.cell == nil, let pending = htmlAlignments.last ?? nil { paragraph.alignment = pending }
         if let item {
             paragraph.listDepth = listDepth
@@ -407,8 +415,10 @@ final class NativeRenderer {
             return
         }
         // Math that cannot be drawn shows as written.
+        let drawing = kind != "mermaid" && code.unicodeScalars.contains { (0x2500...0x259F).contains($0.value) }
         let range = appendBoxed(code, font: Theme.font(size: 14, mono: true), color: Theme.text, fill: Theme.subtle, border: nil,
-                                inside: quotes, indent: indent)
+                                inside: quotes, indent: indent, wraps: !drawing)
+        if drawing { markDrawing(NSRange(location: range.location, length: range.length + 1), room: width - 32) }
         guard kind == "mermaid" else {
             if let language, !language.isEmpty, kind != "math" { engine?.highlight(output, in: range, language: language) }
             return
@@ -429,10 +439,80 @@ final class NativeRenderer {
         return block
     }
 
+    /// Attribute key marking a drawing: a code block drawn with box-drawing characters, such as
+    /// a flow chart or the output of `tree`. Wrapping would tear it apart, so its lines never
+    /// wrap; its text shrinks instead until the widest line fits, as a wide formula does.
+    static let drawing = NSAttributedString.Key("MarkviewDrawing")
+
+    /// A drawing's widest line in columns, and how much narrower than the text container its lines are.
+    struct Drawing: Hashable {
+        let columns: Int
+        let margin: CGFloat
+    }
+
+    /// Characters the monospaced font lacks come from other fonts, at other widths, which would
+    /// knock the lines of a drawing out of line. Each is kerned to the columns a terminal gives it.
+    private func markDrawing(_ range: NSRange, room: CGFloat) {
+        let font = Theme.font(size: 14, mono: true)
+        let column = ("0" as NSString).size(withAttributes: [.font: font]).width
+        var widths: [Character: CGFloat] = [:]
+        var widest = 0, columns = 0, location = range.location
+        for character in (output.string as NSString).substring(with: range) {
+            let length = character.utf16.count
+            defer { location += length }
+            if character.isNewline {
+                widest = max(widest, columns)
+                columns = 0
+            } else if character.isASCII {
+                columns += 1
+            } else {
+                let width = widths[character] ?? (String(character) as NSString).size(withAttributes: [.font: font]).width
+                widths[character] = width
+                let span = width > 0 ? (NativeRenderer.isWide(character) ? 2 : 1) : 0
+                columns += span
+                let kern = CGFloat(span) * column - width
+                if abs(kern) > 0.01 { output.addAttribute(.kern, value: kern, range: NSRange(location: location, length: length)) }
+            }
+        }
+        guard max(widest, columns) > 0 else { return }
+        hasDrawings = true
+        output.addAttribute(NativeRenderer.drawing, value: Drawing(columns: max(widest, columns), margin: Theme.columnWidth - room), range: range)
+        NativeRenderer.fitDrawings(in: output, width: Theme.columnWidth, within: range)
+    }
+
+    /// Whether a terminal gives a character two columns, as it does Chinese, Japanese and Korean
+    /// characters and emoji. Their widths in the fonts they come from vary.
+    private static func isWide(_ character: Character) -> Bool {
+        guard let scalar = character.unicodeScalars.first else { return false }
+        if scalar.properties.isEmojiPresentation || character.unicodeScalars.contains("\u{FE0F}") { return true }
+        switch scalar.value {
+        case 0x1100...0x115F, 0x2E80...0x303E, 0x3041...0x33FF, 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xA000...0xA4CF,
+             0xAC00...0xD7A3, 0xF900...0xFAFF, 0xFE30...0xFE4F, 0xFF00...0xFF60, 0xFFE0...0xFFE6, 0x20000...0x3FFFD: return true
+        default: return false
+        }
+    }
+
+    /// Sizes each drawing so that its widest line fits a text container this wide.
+    static func fitDrawings(in text: NSMutableAttributedString, width: CGFloat, within range: NSRange? = nil) {
+        text.beginEditing()
+        text.enumerateAttribute(drawing, in: range ?? NSRange(location: 0, length: text.length)) { value, range, _ in
+            guard let drawing = value as? Drawing, let font = text.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return }
+            let column = ("0" as NSString).size(withAttributes: [.font: font]).width / font.pointSize
+            let size = max(1, min(14, floor((width - drawing.margin) / (CGFloat(drawing.columns) * column) * 4) / 4))
+            guard size != font.pointSize else { return }
+            text.addAttribute(.font, value: Theme.font(size: size, mono: true), range: range)
+            // Characters from other fonts scale with it, and so do the kerns that align them.
+            text.enumerateAttribute(.kern, in: range) { kern, part, _ in
+                if let kern = kern as? CGFloat { text.addAttribute(.kern, value: kern * size / font.pointSize, range: part) }
+            }
+        }
+        text.endEditing()
+    }
+
     /// Code blocks and front matter: monospaced text in a filled or outlined box.
     @discardableResult
     private func appendBoxed(_ text: String, font: NSFont, color: NSColor, fill: NSColor?, border: NSColor?,
-                             inside quotes: [NSTextBlock] = [], indent: CGFloat = 0) -> NSRange {
+                             inside quotes: [NSTextBlock] = [], indent: CGFloat = 0, wraps: Bool = true) -> NSRange {
         let box = NativeRenderer.fullWidthBlock()
         box.backgroundColor = fill
         box.setWidth(16, type: .absoluteValueType, for: .padding)
@@ -443,9 +523,15 @@ final class NativeRenderer {
         }
         let style = NSMutableParagraphStyle()
         style.textBlocks = quotes + [box]
-        style.lineHeightMultiple = 1.2
-        // A line too long for the box wraps; the continuation is indented so it reads as one line.
-        style.headIndent = ("00" as NSString).size(withAttributes: [.font: font]).width
+        // A drawing's lines touch, as in a terminal, so that its upright strokes join.
+        style.lineHeightMultiple = wraps ? 1.2 : 1
+        if wraps {
+            // A line too long for the box wraps; the continuation is indented so it reads as one line.
+            style.headIndent = ("00" as NSString).size(withAttributes: [.font: font]).width
+        } else {
+            // A drawing is sized to fit, so this only trims a line that rounding leaves a hair too long.
+            style.lineBreakMode = .byClipping
+        }
         separate(style.textBlocks)
         let start = output.length
         output.append(NSAttributedString(string: text + "\n", attributes: [.font: font, .foregroundColor: color, .paragraphStyle: style]))
@@ -518,6 +604,49 @@ final class NativeRenderer {
         return cell
     }
 
+    /// A paragraph that is a cell of a Markdown table; row 0 is the header row.
+    private func cell(of table: OpenTable, row: Int, column: Int) -> Paragraph {
+        var paragraph = Paragraph(quotes: table.quotes)
+        let header = row == 0
+        paragraph.cell = cellBlock(textTable(table.id, columns: table.columns.count, inside: table.quotes, alert: table.alert),
+                                   row: row, column: column, header: header)
+        switch column < table.columns.count ? table.columns[column].alignment : .left {
+        case .center: paragraph.alignment = .center
+        case .right: paragraph.alignment = .right
+        default: paragraph.alignment = header ? .center : .left
+        }
+        return paragraph
+    }
+
+    /// The parser leaves empty cells out, a wholly empty row too, and TextKit moves the rest
+    /// of a row into the gap, so the cells missing before this one are written empty.
+    private func fillCells(upTo row: Int, _ column: Int) {
+        guard var table = openTable else { return }
+        table.column += 1
+        while table.row < row || (table.row == row && table.column < column) {
+            if table.column >= table.columns.count {
+                table.row += 1
+                table.column = 0
+                continue
+            }
+            var paragraph = cell(of: table, row: table.row, column: table.column)
+            (paragraph.size, _, paragraph.color) = textStyle(heading: nil, header: table.row == 0, quotes: table.quotes, alert: table.alert)
+            emit(NSMutableAttributedString(), paragraph)
+            table.column += 1
+        }
+        table.column = column
+        openTable = table
+    }
+
+    /// Fills in the empty cells that end the table's last row, and leaves the space below it.
+    private func finishTable() {
+        guard let table = openTable else { return }
+        fillCells(upTo: table.row, table.columns.count)
+        openTable = nil
+        // A table is in no quote's block (see `textTable`), so neither is the space below it.
+        appendGap(inside: [])
+    }
+
     /// Remembers how wide a cell wants to be. Measuring stops after 2,000 cells; a table
     /// that large spans the column anyway.
     private func measure(_ text: NSAttributedString, in cell: NSTextTableBlock) {
@@ -578,7 +707,7 @@ final class NativeRenderer {
         var listID: Int?
         var marker: String?
         var table: (table: NSTextTable, row: Int, column: Int, columns: Int, occupied: Set<[Int]>)?
-        var cell: (block: NSTextTableBlock, header: Bool, alignment: NSTextAlignment?)?
+        var cell: (block: NSTextTableBlock, header: Bool, alignment: NSTextAlignment?, written: Bool)?
         var code: String?, codeLanguage: String?
         var skip = 0
 
@@ -586,10 +715,11 @@ final class NativeRenderer {
             let base = textStyle(heading: heading, header: cell?.header ?? false, quotes: quotes, alert: alert)
             return (base.size, base.bold || summary, base.color)
         }
-        func flush() {
+        func flush(keepingEmpty: Bool = false) {
             defer { text = NSMutableAttributedString() }
             while let last = text.string.last, last.isWhitespace { text.deleteCharacters(in: NSRange(location: text.length - 1, length: 1)) }
-            guard text.length > 0 || marker != nil else { return }
+            guard text.length > 0 || marker != nil || keepingEmpty else { return }
+            cell?.written = true
             var paragraph = Paragraph(quotes: quotes)
             paragraph.heading = heading
             paragraph.alignment = cell?.alignment ?? htmlAlignments.last ?? nil
@@ -608,15 +738,18 @@ final class NativeRenderer {
         }
         func closeCell() {
             guard let open = cell else { return }
-            flush()
+            // An empty cell is written too, or TextKit moves the rest of the row into its place.
+            flush(keepingEmpty: !open.written)
             table?.column += open.block.columnSpan
             cell = nil
         }
         func closeTable() {
             closeCell()
             flush()
-            if let open = table { open.table.numberOfColumns = max(open.columns, 1) }
+            guard let open = table else { return }
+            open.table.numberOfColumns = max(open.columns, 1)
             table = nil
+            appendGap(inside: [])
         }
 
         for token in HTMLScanner.tokens(source) {
@@ -691,7 +824,7 @@ final class NativeRenderer {
                     let header = tag.name == "th"
                     let block = cellBlock(table!.table, row: table!.row, column: table!.column, columnSpan: span, rowSpan: rows, header: header)
                     table!.columns = max(table!.columns, table!.column + span)
-                    cell = (block, header, alignment(tag.attributes["align"]) ?? (header ? .center : .left))
+                    cell = (block, header, alignment(tag.attributes["align"]) ?? (header ? .center : .left), false)
                 case "pre":
                     flush()
                     if tag.closing {
