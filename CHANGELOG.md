@@ -1,6 +1,6 @@
 # Changes
 
-## 0.4.0 (not released yet)
+## 0.4.0
 
 - Folders open too, from File > Open…, the `markview` command, or by dropping one on the
   Dock icon or a window. The window starts at the folder's README and lists its Markdown
@@ -10,8 +10,11 @@
   to the exact place left, also after a jump to a heading.
 - Clicking a picture shows it full size in a Quick Look panel, and clicking a Mermaid
   diagram shows it as a PDF that stays sharp however far it is zoomed.
+- Coming from 0.2.0? Version 0.3.0 added an outline of the headings, reopening documents
+  where they were left, a copy button on code blocks, 20 more highlighted languages, the
+  `markview` command and more; its notes are on the 0.3.0 release.
 
-## Unreleased
+## 0.3.0
 
 - An outline of the document's headings beside the page: View > Show Outline (⌃⌘S). It
   marks the section being read, and clicking a heading goes to it.
