@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased (next)
+## 0.4.0 (not released yet)
 
 - Clicking a picture shows it full size in a Quick Look panel, and clicking a Mermaid
   diagram shows it as a PDF that stays sharp however far it is zoomed.
