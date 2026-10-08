@@ -143,6 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
         let go = submenu("Go")
         go.delegate = self
+        addHeadingSteps(to: go)
 
         let window = submenu("Window")
         window.add("Minimize", #selector(NSWindow.performMiniaturize(_:)), key: "m")
@@ -186,6 +187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             }
             if apps.isEmpty { menu.add("No Applications", nil) }
         case "Go":
+            addHeadingSteps(to: menu)
             let headings = (frontWindow?.windowController as? DocumentOutline)?.headings ?? []
             for heading in headings {
                 let item = menu.add(heading.title, #selector(goToHeading(_:)))
@@ -197,6 +199,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         default:
             break
         }
+    }
+
+    /// Next and Previous Heading head the Go menu, above the headings themselves. They are there
+    /// from the start, so their keys work before the menu is first opened.
+    private func addHeadingSteps(to menu: NSMenu) {
+        func arrow(_ key: Int) -> String { String(Character(Unicode.Scalar(UInt32(key))!)) }
+        menu.add("Next Heading", #selector(ViewerWindowController.goToNextHeading(_:)), key: arrow(NSDownArrowFunctionKey), modifiers: [.command, .option])
+        menu.add("Previous Heading", #selector(ViewerWindowController.goToPreviousHeading(_:)), key: arrow(NSUpArrowFunctionKey), modifiers: [.command, .option])
+        menu.addItem(.separator())
     }
 
     @objc private func openRecent(_ sender: NSMenuItem) {

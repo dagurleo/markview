@@ -14,6 +14,10 @@
 - A file in Latin-1 or another older encoding no longer turns garbled when it changes on disk.
 - Images from the web stay in place when the page is shown again, after a save or a change
   of settings, instead of being fetched anew.
+- Code in 20 more languages is highlighted, among them Dockerfile, PowerShell, Scala, Dart,
+  Haskell, Elixir, Groovy and Gradle, Protobuf, Nginx and LaTeX.
+- Front matter that is simple YAML shows as a table of its keys and values, as on GitHub.
+- Go > Next Heading (⌥⌘↓) and Previous Heading (⌥⌘↑) step through the document.
 - Links to headings far down a large document now land on the heading rather than a
   screen short of it.
 

@@ -29,8 +29,9 @@ Markview menu checks at any time. Version 0.1.0 predates this and is updated by 
 
 - Renders Markdown with Foundation's parser and TextKit, with no web view:
   headings, lists and task lists, tables, blockquotes and GitHub alerts, code
-  blocks highlighted by highlight.js running in JavaScriptCore, images (local and
-  remote), front matter, and the HTML a README tends to use (centred blocks,
+  blocks highlighted by highlight.js running in JavaScriptCore (56 languages), images
+  (local and remote), front matter (as a table of its keys when it is simple YAML, as
+  GitHub shows it), and the HTML a README tends to use (centred blocks,
   `<img>` with a size, `<details>`, HTML tables, inline tags). Badge links
   (`[![alt](image)](url)`) work, and so do a README's images for light and dark windows
   (`<picture>` with `prefers-color-scheme` sources, and `#gh-light-mode-only` /
@@ -66,7 +67,8 @@ Markview menu checks at any time. Version 0.1.0 predates this and is updated by 
 - Shows where a link leads in the corner of the window while the pointer is over it,
   puts a copy button on code blocks, and offers "Copy Link to Heading" in a heading's
   context menu (as `file.md#heading`, the way Markdown links to it).
-- Find (⌘F), zoom (⌘+ ⌘- ⌘0), a Go menu listing the headings, View Source (⌘U),
+- Find (⌘F), zoom (⌘+ ⌘- ⌘0), a Go menu listing the headings, with Next and Previous
+  Heading (⌥⌘↓ ⌥⌘↑), View Source (⌘U),
   Print (⌘P) and Export as PDF (⇧⌘E), Open With, Reveal in Finder (⇧⌘R), Copy
   Path (⌥⌘C), Open Recent, and "Make Default Markdown Viewer" in the app menu.
   Markdown files show Markview's document icon once it is the default app.
@@ -145,7 +147,7 @@ Installed copies read the appcast from `releases/latest/download/appcast.xml`
 | `Sources/` | The app's shell: app delegate and menu, document, file watcher, link rules, the outline sidebar, the places documents were last read, and the Settings window (SwiftUI) |
 | `Native/` | The renderer: `MarkdownView`, `NativeRenderer`, `HighlightEngine`, `Math`, `Diagrams`, `Theme` and its `Palette`s, `Settings`, the window controller and the Quick Look controller |
 | `QuickLook/` | The extension's plist and entitlements, and the `LinkOpener` XPC service |
-| `Resources/` | Icons, and the vendored highlight.js and emoji list. The Quick Look extension has its own copy of the `vendor` folder |
+| `Resources/` | Icons, the `markview` command, and the vendored highlight.js and emoji list. `highlight.min.js` is highlight.js 11.12.0's standard build followed by 20 grammars from its `@highlightjs/cdn-assets` package (Dockerfile, PowerShell, Scala, Dart, Haskell, Elixir, Erlang, Groovy, Gradle, Protobuf, Nginx, LaTeX, CMake, Nix, Julia, Clojure, OCaml, F#, properties, Apache); to add one, append its `languages/<name>.min.js` from the same version. The Quick Look extension has its own copy of the `vendor` folder |
 | `Vendor/MermaidKit/` | [MermaidKit](https://github.com/2389-research/MermaidKit) 2.2.0 (85fdc08), which draws diagrams: its `MermaidLayout` and `MermaidRender` sources as released, less `MermaidView.swift`, which needs SwiftUI. To update, copy both folders from a new release and drop that file again |
 | `Vendor/SwaTex/` | [SwaTex](https://github.com/PhraseHQ/SwaTex) 0.5.0 (2b38d0b), which draws math: its `SwaTex` sources less the docs, and from `SwaTexRender` only `DisplayListRenderer.swift`, `KaTeXFontProvider.swift` and the fonts. Markview's changes are marked `Markview:` in the code: a `Mutex` that works on macOS 14, fonts read from the app, and KaTeX's `align` spacing, `\dots`, `\tag` text and placement, and equation numbering. To update, copy the same files from a new release and carry over what `grep -rn Markview: Vendor/SwaTex` finds |
 | `scripts/` | `check.sh` and `compare.swift`, which compare this build's rendering with a release's; `release.sh`, which builds, notarizes and zips a release; and `make-icon.swift`, which draws the app and document icons |

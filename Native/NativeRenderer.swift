@@ -118,9 +118,13 @@ final class NativeRenderer {
         var body = markdown
         if let match = markdown.range(of: #"^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)"#, options: .regularExpression) {
             let inner = markdown[match].split(separator: "\n", omittingEmptySubsequences: false).dropFirst().dropLast(2)
-            appendBoxed(inner.joined(separator: "\n"), font: theme.font(size: theme.scaled(12.8), mono: true), color: theme.muted,
-                        fill: nil, border: theme.border)
-            body.removeSubrange(match)
+            if let table = NativeRenderer.frontMatterTable(inner.map { String($0.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))) }) {
+                body.replaceSubrange(match, with: table + "\n\n")
+            } else {
+                appendBoxed(inner.joined(separator: "\n"), font: theme.font(size: theme.scaled(12.8), mono: true), color: theme.muted,
+                            fill: nil, border: theme.border)
+                body.removeSubrange(match)
+            }
         }
         body = MarkdownExtensions.apply(body, baseURL: baseURL, formulas: &formulas)
         body = linkedImagesAsHTML(body)
@@ -162,6 +166,52 @@ final class NativeRenderer {
     }
 
     private static let calloutMarker = try! NSRegularExpression(pattern: #"^\[!(\w+)\][+-]?[ \t]*"#)
+
+    private static let frontMatterKey = try! NSRegularExpression(pattern: #"^([A-Za-z0-9_][A-Za-z0-9_ .-]*):(?:[ \t]+(.*))?$"#)
+
+    /// Front matter as an HTML table of its keys and values, as GitHub shows it, when it is simple
+    /// YAML: keys with plain, quoted or list values. Anything else, such as nested keys or text over
+    /// several lines, gives nil, and the front matter shows as written.
+    static func frontMatterTable(_ lines: [String]) -> String? {
+        var rows: [(key: String, values: [String], open: Bool)] = []
+        func scalar(_ text: String) -> String {
+            var value = text.trimmingCharacters(in: .whitespaces)
+            if let quote = value.first, quote == "\"" || quote == "'", value.count > 1, value.last == quote {
+                return String(value.dropFirst().dropLast())
+            }
+            if let comment = value.range(of: " #") { value = String(value[..<comment.lowerBound]) }
+            return value
+        }
+        for line in lines {
+            if line.trimmingCharacters(in: .whitespaces).isEmpty || line.hasPrefix("#") { continue }
+            let item = line.trimmingCharacters(in: .whitespaces)
+            if line.first == " " || line.first == "\t" || line.first == "-" {
+                // A list under the key above, and nothing else, may be indented.
+                guard item.hasPrefix("- "), let last = rows.last, last.open else { return nil }
+                rows[rows.count - 1].values.append(scalar(String(item.dropFirst(2))))
+                continue
+            }
+            let range = NSRange(location: 0, length: (line as NSString).length)
+            guard let match = frontMatterKey.firstMatch(in: line, range: range) else { return nil }
+            let key = (line as NSString).substring(with: match.range(at: 1))
+            let value = match.range(at: 2).location == NSNotFound ? "" : (line as NSString).substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespaces)
+            if value.isEmpty {
+                rows.append((key, [], true))
+            } else if value.hasPrefix("["), value.hasSuffix("]") {
+                rows.append((key, value.dropFirst().dropLast().split(separator: ",").map { scalar(String($0)) }, false))
+            } else if ["|", ">", "{", "&", "*", "!"].contains(where: value.hasPrefix) {
+                return nil
+            } else {
+                rows.append((key, [scalar(value)], false))
+            }
+        }
+        guard !rows.isEmpty else { return nil }
+        func escaped(_ text: String) -> String {
+            text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+        }
+        let body = rows.map { "<tr><th align=\"left\">\(escaped($0.key))</th><td>\(escaped($0.values.joined(separator: ", ")))</td></tr>" }
+        return "<table>\n" + body.joined(separator: "\n") + "\n</table>"
+    }
 
     private static let linkedImage = try! NSRegularExpression(
         pattern: #"\[!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)\]\(([^)\s]+)(?:\s+"[^"]*")?\)"#)

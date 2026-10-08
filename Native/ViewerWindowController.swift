@@ -73,13 +73,9 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
             markCurrentHeading()
         }
         outline.onSelect = { [weak self] heading in
-            guard let self else { return }
-            markdownView.jump(to: heading.anchor)
+            guard let self, let index = headings.firstIndex(where: { $0.anchor == heading.anchor }) else { return }
+            show(headingAt: index)
             self.window?.makeFirstResponder(markdownView.textView)
-            if let index = outline.headings.firstIndex(where: { $0.anchor == heading.anchor }) {
-                chosen = (index, markdownView.contentView.bounds.minY)
-                outline.mark(index)
-            }
         }
         windowFrameAutosaveName = "Viewer"
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
@@ -127,6 +123,31 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
             markCurrentHeading()
         }
         if !scripted { UserDefaults.standard.set(!outlineItem.isCollapsed, forKey: "showsOutline") }
+    }
+
+    /// Goes to a heading, which the outline marks while the page stays there.
+    private func show(headingAt index: Int) {
+        markdownView.jump(to: headings[index].anchor)
+        chosen = (index, markdownView.contentView.bounds.minY)
+        if !outlineItem.isCollapsed { outline.mark(index) }
+    }
+
+    // MARK: Headings one at a time
+
+    /// The heading after the one being read.
+    @objc func goToNextHeading(_ sender: Any?) {
+        let probe = markdownView.topCharacter(offset: 40)
+        guard let next = headings.indices.first(where: { (markdownView.location(of: headings[$0].anchor) ?? 0) > probe }) else { return NSSound.beep() }
+        show(headingAt: next)
+    }
+
+    /// The start of the section being read, or from its start, the heading before it.
+    @objc func goToPreviousHeading(_ sender: Any?) {
+        let probe = markdownView.topCharacter(offset: 40), top = markdownView.topCharacter()
+        guard let current = headings.indices.last(where: { (markdownView.location(of: headings[$0].anchor) ?? .max) <= probe }) else { return NSSound.beep() }
+        let atItsStart = (markdownView.location(of: headings[current].anchor) ?? 0) >= top
+        guard !atItsStart || current > 0 else { return NSSound.beep() }
+        show(headingAt: atItsStart ? current - 1 : current)
     }
 
     /// The heading being read is the last one to start above a point a little below the top of
@@ -187,6 +208,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     @objc func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(toggleSource(_:)) { item.state = showingSource ? .on : .off }
         if item.action == #selector(toggleOutline(_:)) { item.title = outlineItem.isCollapsed ? "Show Outline" : "Hide Outline" }
+        if item.action == #selector(goToNextHeading(_:)) || item.action == #selector(goToPreviousHeading(_:)) { return !headings.isEmpty }
         return true
     }
 

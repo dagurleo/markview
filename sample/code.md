@@ -51,6 +51,22 @@ native: true
 + added line
 ```
 
+```dockerfile
+FROM swift:6.0 AS build
+RUN swift build -c release   # a Dockerfile
+EXPOSE 8080
+```
+
+```powershell
+Get-ChildItem -Path . -Filter *.md | ForEach-Object { $_.Name }  # PowerShell
+```
+
+```elixir
+defmodule Greeter do
+  def greet(name), do: "Hello, #{name}!"   # Elixir
+end
+```
+
 ## Without a language
 
 ```
