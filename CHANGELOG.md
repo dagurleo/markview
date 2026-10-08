@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 0.3.0
 
 - An outline of the document's headings beside the page: View > Show Outline (⌃⌘S). It
   marks the section being read, and clicking a heading goes to it.
