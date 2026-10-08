@@ -90,6 +90,20 @@
 			<key>NSDocumentClass</key>
 			<string>MarkdownDocument</string>
 		</dict>
+		<!-- A folder opens in a window listing its Markdown files (Sources/Folders.swift). Rank
+		     None: Markview takes a folder dropped on it, but never opens folders otherwise. -->
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Folder</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>None</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.folder</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>

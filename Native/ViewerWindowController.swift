@@ -4,8 +4,11 @@ import UniformTypeIdentifiers
 
 final class ViewerWindowController: NSWindowController, DocumentOutline, DocumentActions {
     private let markdownView: MarkdownView
-    private let outline = OutlineSidebar()
+    private let sidebar = Sidebar()
+    private var outline: OutlineList { sidebar.outline }
     private let outlineItem: NSSplitViewItem
+    /// The folder the window shows the documents of, if it was opened on one (see Folders).
+    private(set) var root: URL?
     private let divider = OutlineSplitView()
     /// A heading chosen in the outline stays marked while the page stays where it went: near
     /// the end of a document the page cannot bring it to the top.
@@ -43,7 +46,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         divider.dividerStyle = .thin
         divider.color = markdownView.theme.border
         split.splitView = divider
-        outlineItem = NSSplitViewItem(viewController: outline)
+        outlineItem = NSSplitViewItem(viewController: sidebar)
         outlineItem.canCollapse = true
         outlineItem.minimumThickness = 150
         outlineItem.maximumThickness = 400
@@ -78,6 +81,11 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
             outline.show(markdownView.headings)
             markCurrentHeading()
         }
+        sidebar.files.onSelect = { [weak self] file in
+            guard let self else { return }
+            leaving()
+            show(file) { [weak self] _ in self?.window?.makeFirstResponder(self?.markdownView.textView) }
+        }
         outline.onSelect = { [weak self] heading in
             guard let self, let index = headings.firstIndex(where: { $0.anchor == heading.anchor }) else { return }
             leaving()
@@ -99,6 +107,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     override var document: AnyObject? {
         didSet {
             render()
+            sidebar.files.current = (document as? NSDocument)?.fileURL
             // A #heading the document was opened at comes after this, and wins. A document the
             // window moves on to, as it follows a link, starts at its top instead.
             if keepsPlace, window?.isVisible != true, let file = (document as? NSDocument)?.fileURL { placeToRestore = Places.place(of: file) }
@@ -113,12 +122,21 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     func show(_ theme: Theme) {
         markdownView.theme = theme
         window?.backgroundColor = theme.background
-        outline.apply(theme)
+        sidebar.apply(theme)
         divider.color = theme.border
         render()
     }
 
     // MARK: Outline
+
+    /// A window opened on a folder lists its documents in the sidebar, which it opens with, and
+    /// names the folder under the document's name.
+    func show(folder: URL, tree: FileNode) {
+        root = folder
+        sidebar.show(folder: folder, tree: tree)
+        outlineItem.isCollapsed = false
+        window?.subtitle = folder.lastPathComponent
+    }
 
     /// The page narrows or widens as the outline comes and goes, and its lines rewrap; the
     /// place in it is kept by its character, as when the window is resized.
@@ -239,7 +257,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
 
     @objc func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(toggleSource(_:)) { item.state = showingSource ? .on : .off }
-        if item.action == #selector(toggleOutline(_:)) { item.title = outlineItem.isCollapsed ? "Show Outline" : "Hide Outline" }
+        if item.action == #selector(toggleOutline(_:)) { item.title = outlineItem.isCollapsed ? "Show Sidebar" : "Hide Sidebar" }
         if item.action == #selector(goToNextHeading(_:)) || item.action == #selector(goToPreviousHeading(_:)) { return !headings.isEmpty }
         if item.action == #selector(goBack(_:)) { return !backStops.isEmpty }
         if item.action == #selector(goForward(_:)) { return !forwardStops.isEmpty }
@@ -344,9 +362,9 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         }
     }
 
-    /// A file dropped on the page opens in a window of its own, as one dropped on the Dock icon does.
+    /// A file or folder dropped on the page opens in a window of its own, as one dropped on the Dock icon does.
     private func openDropped(_ url: URL) {
-        if url.isFileURL, Links.markdownExtensions.contains(url.pathExtension.lowercased()) { AppDelegate.open(url) } else { open(url) }
+        if url.isFileURL, Folders.isFolder(url) || Links.markdownExtensions.contains(url.pathExtension.lowercased()) { AppDelegate.open(url) } else { open(url) }
     }
 
     // MARK: Back and forward

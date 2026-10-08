@@ -17,8 +17,8 @@ and drag Markview to Applications. It is signed and notarized, and runs on macOS
 or later. Open it once so that macOS picks up its Quick Look preview; "Make Default
 Markdown Viewer" in the Markview menu has Markdown files open in it.
 
-`markview README.md` opens files from a terminal, and `some-command | markview` shows
-what is piped in. The Homebrew cask puts the command on the PATH; otherwise link it:
+`markview README.md` opens files from a terminal, `markview docs` a folder, and
+`some-command | markview` shows what is piped in. The Homebrew cask puts the command on the PATH; otherwise link it:
 `ln -s /Applications/Markview.app/Contents/Resources/markview /usr/local/bin/markview`.
 
 Markview updates itself through [Sparkle](https://sparkle-project.org). On its second
@@ -67,8 +67,12 @@ Markview menu checks at any time. Version 0.1.0 predates this and is updated by 
   Quick Look previews follow them too. Printing and PDFs use the theme's light colours.
 - Quick Look preview through an app extension. Links in the preview go through a
   small XPC helper because the extension's sandbox cannot open them itself.
-- An outline of the headings beside the page (View > Show Outline, ⌃⌘S), marking the
-  section being read; clicking a heading goes to it.
+- A sidebar beside the page (View > Show Sidebar, ⌃⌘S) with the document's headings,
+  marking the section being read; clicking a heading goes to it.
+- Opens folders too (File > Open…, the `markview` command, or a folder dropped on the
+  Dock icon or a window): the window starts at the folder's README and lists its
+  Markdown files in the sidebar, keeping up as files come and go; hidden folders and
+  `node_modules` are left out.
 - Reopens each document where it was last read (for the last 200 documents).
 - Shows where a link leads in the corner of the window while the pointer is over it,
   puts a copy button on code blocks, and offers "Copy Link to Heading" in a heading's
@@ -150,7 +154,7 @@ Installed copies read the appcast from `releases/latest/download/appcast.xml`
 
 | Folder | Contents |
 |---|---|
-| `Sources/` | The app's shell: app delegate and menu, document, file watcher, link rules, the outline sidebar, the places documents were last read, and the Settings window (SwiftUI) |
+| `Sources/` | The app's shell: app delegate and menu, document, file watcher, link rules, folders and the document controller that opens them, the sidebar with its file and heading lists, the places documents were last read, and the Settings window (SwiftUI) |
 | `Native/` | The renderer: `MarkdownView`, `NativeRenderer`, `HighlightEngine`, `Math`, `Diagrams`, `Theme` and its `Palette`s, `Settings`, the window controller and the Quick Look controller |
 | `QuickLook/` | The extension's plist and entitlements, and the `LinkOpener` XPC service |
 | `Resources/` | Icons, the `markview` command, and the vendored highlight.js and emoji list. `highlight.min.js` is highlight.js 11.12.0's standard build followed by 20 grammars from its `@highlightjs/cdn-assets` package (Dockerfile, PowerShell, Scala, Dart, Haskell, Elixir, Erlang, Groovy, Gradle, Protobuf, Nginx, LaTeX, CMake, Nix, Julia, Clojure, OCaml, F#, properties, Apache); to add one, append its `languages/<name>.min.js` from the same version. The Quick Look extension has its own copy of the `vendor` folder |

@@ -2,6 +2,9 @@
 
 ## 0.4.0 (not released yet)
 
+- Folders open too, from File > Open…, the `markview` command, or by dropping one on the
+  Dock icon or a window. The window starts at the folder's README and lists its Markdown
+  files in the sidebar, which now has Files and Contents tabs (View > Show Sidebar).
 - Links to other Markdown files open in the same window, as in a browser; ⌘-click
   opens a new one. Go > Back (⌘[) and Forward (⌘]), or a mouse's side buttons, return
   to the exact place left, also after a jump to a heading.
