@@ -1,0 +1,14 @@
+node_modules
+.DS_Store
+dist
+*.local
+.env*
+.tanstack
+.wrangler
+.output
+
+# typescript
+*.tsbuildinfo
+
+# The screenshot script's full-size PNGs; the WebP copies in public/shots are kept.
+shots/out/
