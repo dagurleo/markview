@@ -131,6 +131,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         edit.add("Find Previous", #selector(ViewerWindowController.findPrevious(_:)), key: "g", modifiers: [.command, .shift])
 
         let view = submenu("View")
+        view.add("Show Outline", #selector(ViewerWindowController.toggleOutline(_:)), key: "s", modifiers: [.command, .control])
+        view.addItem(.separator())
         view.add("Actual Size", #selector(ViewerWindowController.resetPageZoom(_:)), key: "0")
         view.add("Zoom In", #selector(ViewerWindowController.zoomPageIn(_:)), key: "+")
         view.add("Zoom Out", #selector(ViewerWindowController.zoomPageOut(_:)), key: "-")

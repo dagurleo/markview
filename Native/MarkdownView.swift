@@ -18,6 +18,8 @@ final class ColumnTextView: NSTextView {
 
     /// Called with new text, whose drawings and tables the renderer fitted to a full column.
     func textChanged(hasDrawings: Bool, tables: [NativeRenderer.FittedTable]) {
+        copyButton.isHidden = true
+        hover(nil)
         self.hasDrawings = hasDrawings
         self.tables = tables
         drawingsWidth = columnWidth
@@ -99,6 +101,72 @@ final class ColumnTextView: NSTextView {
         return !dropped.isEmpty
     }
 
+    // MARK: Pointer
+
+    /// Called with the link under the pointer, or nil once it is off links.
+    var onHoverLink: (URL?) -> Void = { _ in }
+    /// The button that copies the code block under the pointer.
+    let copyButton = CopyButton()
+    private var hoveredLink: URL?
+    private var pointerArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        guard pointerArea == nil else { return }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        pointerArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        let point = convert(event.locationInWindow, from: nil)
+        pointerMoved(to: point)
+        // The text view sets its own cursor as the pointer moves, over its subviews too.
+        if !copyButton.isHidden, copyButton.frame.contains(point) { NSCursor.pointingHand.set() }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        guard event.trackingArea == pointerArea else { return }
+        hover(nil)
+        copyButton.isHidden = true
+    }
+
+    private func hover(_ link: URL?) {
+        guard link != hoveredLink else { return }
+        hoveredLink = link
+        onHoverLink(link)
+    }
+
+    private func pointerMoved(to point: NSPoint) {
+        guard let layout = layoutManager, let container = textContainer, let storage = textStorage, storage.length > 0 else { return }
+        let inContainer = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        let glyph = layout.glyphIndex(for: inContainer, in: container)
+        let index = layout.characterIndexForGlyph(at: glyph)
+        guard index < storage.length else { return }
+        // A link only counts under the pointer itself, not as the nearest text to it.
+        let overGlyph = layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).contains(inContainer)
+        let link = overGlyph ? storage.attribute(.link, at: index, effectiveRange: nil) : nil
+        hover(link as? URL ?? (link as? String).flatMap(URL.init(string:)))
+
+        // A code block's button shows while the pointer is anywhere in its box.
+        var range = NSRange()
+        guard let code = storage.attribute(NativeRenderer.code, at: index, effectiveRange: &range) as? String,
+              let box = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle)?.textBlocks.last
+        else { return copyButton.isHidden = true }
+        let block = storage.range(of: box, at: range.location)
+        var bounds = layout.boundsRect(for: box, glyphRange: layout.glyphRange(forCharacterRange: block, actualCharacterRange: nil))
+        bounds.origin.x += textContainerOrigin.x
+        bounds.origin.y += textContainerOrigin.y
+        guard bounds.contains(point) else { return copyButton.isHidden = true }
+        if copyButton.superview == nil { addSubview(copyButton) }
+        copyButton.code = code
+        copyButton.setFrameOrigin(NSPoint(x: bounds.maxX - copyButton.frame.width - 8, y: bounds.minY + 8))
+        copyButton.isHidden = false
+        window?.invalidateCursorRects(for: copyButton)
+    }
+
     /// Attribute key holding a drawn formula's or diagram's Markdown, for copying.
     static let written = NSAttributedString.Key("MarkviewWritten")
 
@@ -124,6 +192,98 @@ final class ColumnTextView: NSTextView {
     }
 }
 
+/// The button in the corner of a code block, which copies its code.
+final class CopyButton: NSView {
+    var code = ""
+    var colors = (fill: NSColor.textBackgroundColor, border: NSColor.separatorColor, ink: NSColor.secondaryLabelColor, done: NSColor.systemGreen)
+    private var copied = false
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: 28, height: 26))
+        toolTip = "Copy"
+        isHidden = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
+        colors.fill.setFill()
+        shape.fill()
+        colors.border.setStroke()
+        shape.stroke()
+        let name = copied ? "checkmark" : "doc.on.doc"
+        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .regular)) else { return }
+        let tinted = NSImage(size: symbol.size, flipped: false) { rect in
+            symbol.draw(in: rect)
+            (self.copied ? self.colors.done : self.colors.ink).set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+        tinted.draw(in: NSRect(x: (bounds.width - symbol.size.width) / 2, y: (bounds.height - symbol.size.height) / 2,
+                               width: symbol.size.width, height: symbol.size.height))
+    }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+
+    override func mouseDown(with event: NSEvent) { copyCode() }
+
+    private func copyCode() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
+        copied = true
+        needsDisplay = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.copied = false
+            self?.needsDisplay = true
+        }
+    }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityLabel() -> String? { "Copy code" }
+    override func accessibilityPerformPress() -> Bool { copyCode(); return true }
+}
+
+/// Where the link under the pointer leads, in the bottom corner of the page, as a browser shows it.
+final class LinkStatus: NSView {
+    let label = NSTextField(labelWithString: "")
+    var colors = (fill: NSColor.textBackgroundColor, border: NSColor.separatorColor) { didSet { needsDisplay = true } }
+
+    init() {
+        super.init(frame: .zero)
+        label.font = .systemFont(ofSize: 11)
+        label.lineBreakMode = .byTruncatingMiddle
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+        ])
+        isHidden = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 5, yRadius: 5)
+        colors.fill.setFill()
+        shape.fill()
+        colors.border.setStroke()
+        shape.stroke()
+    }
+
+    // The pointer passes through it to the page.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 /// An attachment that shrinks to the line it is on, so a figure or picture sized for the full
 /// column still fits a narrower window, such as a Quick Look preview. Figures are vector images,
 /// so they stay sharp.
@@ -138,6 +298,42 @@ final class FittingAttachment: NSTextAttachment {
         let room = lineFrag.width - (clearsPadding ? 2 * (textContainer?.lineFragmentPadding ?? 0) : 0)
         if room > 0, bounds.width > room { bounds.size = NSSize(width: room, height: bounds.height * room / bounds.width) }
         return bounds
+    }
+}
+
+/// A picture that depends on the appearance: from a <picture> whose sources name one image for
+/// light windows and one for dark, or an image a README shows in one appearance alone
+/// (#gh-light-mode-only, #gh-dark-mode-only), which has nothing for the other. Its size comes
+/// from the appearance of the text view it is laid out in, so that one shown alone takes no
+/// room in the other; MarkdownView lays the text out again when the appearance changes.
+/// A page for printing takes plain copies (see NativeRenderer.copy): the text system keeps the
+/// sizes it measured in the window rather than asking again for another layout.
+final class AppearanceAttachment: NSTextAttachment {
+    var light: NSImage? { didSet { redraw() } }
+    var dark: NSImage? { didSet { redraw() } }
+
+    private func picture(for appearance: NSAppearance?) -> NSImage? {
+        appearance?.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+    }
+
+    /// The image the text system draws picks its picture as it is drawn, as diagrams do.
+    private func redraw() {
+        let sizes = [light, dark].compactMap { $0?.size }
+        let size = NSSize(width: sizes.map(\.width).max() ?? 1, height: sizes.map(\.height).max() ?? 1)
+        let drawing = NSImage(size: size, flipped: false) { [weak self] rect in
+            self?.picture(for: NSAppearance.currentDrawing())?.draw(in: rect)
+            return true
+        }
+        drawing.cacheMode = .never
+        image = drawing
+    }
+
+    // As wide as its picture for this appearance, and no wider than the line, as other pictures are.
+    override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: NSRect,
+                                   glyphPosition position: NSPoint, characterIndex charIndex: Int) -> NSRect {
+        guard var size = picture(for: textContainer?.textView?.effectiveAppearance)?.size else { return .zero }
+        if lineFrag.width > 0, size.width > lineFrag.width { size = NSSize(width: lineFrag.width, height: size.height * lineFrag.width / size.width) }
+        return NSRect(origin: .zero, size: size)
     }
 }
 
@@ -181,16 +377,27 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
     var theme = Settings.theme {
         didSet { applyTheme() }
     }
+    /// Called whenever new text is shown, with its headings, and whenever the view scrolls.
+    var onShow: () -> Void = {}
+    var onScroll: () -> Void = {}
 
+    private let linkStatus = LinkStatus()
     private var anchors: [String: Int] = [:]
     /// The headings of the rendered document, in order.
     private(set) var headings: [Heading] = []
     private var baseURL: URL?
     private var generation = 0
-    private var rendering = false
+    /// Whether a large document is still being rendered in full.
+    private(set) var rendering = false
     /// Large documents render here, one at a time.
     private let renderQueue = DispatchQueue(label: "com.dagurleo.markview.render", qos: .userInitiated)
     private var pendingAnchor: String?
+    private var pendingPlace: Int?
+    /// Whether any picture depends on the appearance, so the text is laid out again when it changes.
+    private var appearanceImages = false
+    /// The pictures fetched from the web for the document on show, so that showing it again, as
+    /// when the file or a setting changes, puts them straight back rather than fetching them anew.
+    private var fetched: [URL: NSImage] = [:]
     /// The drawings of the diagrams on show, so the same document shown again, as it is when
     /// the file changes, keeps them instead of flashing back to code while they are redrawn.
     private var drawn: [String: NSImage] = [:]
@@ -227,6 +434,12 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         minMagnification = 0.5
         maxMagnification = 3
         applyTheme()
+        textView.onHoverLink = { [weak self] link in self?.showStatus(of: link) }
+        addSubview(linkStatus)
+        contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: contentView, queue: .main) { [weak self] _ in
+            self?.onScroll()
+        }
     }
 
     private func applyTheme() {
@@ -234,6 +447,69 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         textView.backgroundColor = theme.background
         textView.linkTextAttributes = [.foregroundColor: theme.link, .cursor: NSCursor.pointingHand]
         textView.columnWidth = theme.columnWidth
+        textView.copyButton.colors = (theme.background, theme.border, theme.muted, theme.alerts["TIP"]!.color)
+        linkStatus.colors = (theme.background, theme.border)
+        linkStatus.label.textColor = theme.muted
+    }
+
+    // MARK: Links and headings
+
+    private func showStatus(of link: URL?) {
+        linkStatus.label.stringValue = link.map(describe) ?? ""
+        linkStatus.isHidden = link == nil
+        placeStatus()
+    }
+
+    // A scroll view lays out its own subviews, so the link's label is placed by hand: in the
+    // bottom corner, as wide as its text up to most of the view.
+    override func tile() {
+        super.tile()
+        placeStatus()
+    }
+
+    private func placeStatus() {
+        guard !linkStatus.isHidden else { return }
+        let size = linkStatus.fittingSize
+        let width = min(size.width, bounds.width * 0.7)
+        linkStatus.frame = NSRect(x: 6, y: isFlipped ? bounds.height - size.height - 6 : 6, width: width, height: size.height)
+    }
+
+    /// What a link does, in a few words: the heading it goes to, the file it opens or shows, or the address.
+    private func describe(_ link: URL) -> String {
+        guard link.isFileURL else {
+            return link.scheme == "mailto" ? "Email " + (link.absoluteString.dropFirst("mailto:".count).removingPercentEncoding ?? "") : link.absoluteString
+        }
+        let file = URL(fileURLWithPath: link.path), fragment = link.fragment.map { "#" + $0 } ?? ""
+        if file.path == baseURL?.path { return fragment.isEmpty ? file.lastPathComponent : fragment }
+        // Relative to the document's folder when it is in it, as the document itself would write it.
+        let folder = baseURL?.deletingLastPathComponent().path ?? ""
+        let shown = file.path.hasPrefix(folder + "/") ? String(file.path.dropFirst(folder.count + 1)) : (file.path as NSString).abbreviatingWithTildeInPath
+        if Links.markdownExtensions.contains(file.pathExtension.lowercased()) { return shown + fragment }
+        return FileManager.default.fileExists(atPath: file.path) ? "Show “\(shown)” in Finder" : shown + " (not found)"
+    }
+
+    /// The heading a character is in, if any.
+    private func heading(at index: Int) -> Heading? {
+        guard let storage = textView.textStorage, index < storage.length else { return nil }
+        let start = (storage.string as NSString).paragraphRange(for: NSRange(location: index, length: 0)).location
+        return headings.first { anchors[$0.anchor] == start }
+    }
+
+    // A heading's context menu can copy a link to it, as the document's own links write one.
+    func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+        guard let heading = heading(at: charIndex), let name = baseURL?.lastPathComponent else { return menu }
+        let item = NSMenuItem(title: "Copy Link to Heading", action: #selector(copyHeadingLink(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = (name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name) + "#" + heading.anchor
+        menu.insertItem(item, at: 0)
+        menu.insertItem(.separator(), at: 1)
+        return menu
+    }
+
+    @objc private func copyHeadingLink(_ sender: NSMenuItem) {
+        guard let link = sender.representedObject as? String else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(link, forType: .string)
     }
 
     @available(*, unavailable)
@@ -275,7 +551,10 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
                 if let anchor = self.pendingAnchor {
                     self.pendingAnchor = nil
                     self.jump(to: anchor)
+                } else if let place = self.pendingPlace {
+                    self.go(to: place)
                 }
+                self.pendingPlace = nil
             }
         }
     }
@@ -291,13 +570,13 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         replaceText(with: text, from: nil, keepingPlace: false)
     }
 
-    /// The character at the top of the view, or 0 at the top of the document.
-    private func topCharacter() -> Int {
+    /// The character at the top of the view, or `offset` points below it, or 0 at the top of the document.
+    func topCharacter(offset: CGFloat = 0) -> Int {
         guard let layout = textView.layoutManager, let container = textView.textContainer else { return 0 }
         // Asking which glyph sits at a point would lay out everything above it, which takes
         // minutes far down a large document. This only reads what is already laid out.
         var visible = contentView.bounds
-        visible.origin.y -= textView.textContainerOrigin.y
+        visible.origin.y += offset - textView.textContainerOrigin.y
         let glyphs = layout.glyphRange(forBoundingRectWithoutAdditionalLayout: visible, in: container)
         return visible.origin.y > 0 && glyphs.length > 0 ? layout.characterIndexForGlyph(at: glyphs.location) : 0
     }
@@ -306,6 +585,16 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
     private func replaceText(with rendered: NSAttributedString, from renderer: NativeRenderer?, keepingPlace: Bool) {
         guard let layout = textView.layoutManager, let container = textView.textContainer else { return }
         let top = topCharacter()
+        // Pictures already fetched go in before the text is laid out, so it takes their size at once.
+        let previous = fetched
+        fetched = [:]
+        var remote: [NativeRenderer.RemoteImage] = []
+        for request in renderer?.remoteImages ?? [] {
+            guard let picture = previous[request.url] ?? fetched[request.url] else { remote.append(request); continue }
+            fetched[request.url] = picture
+            place(picture, for: request)
+        }
+        appearanceImages = renderer?.hasAppearanceImages ?? false
         // A fresh storage rather than an edit of the old one: replacing the text of a large,
         // partly laid out document in place took 14 seconds for 5 MB.
         contentView.scroll(to: .zero)
@@ -326,8 +615,9 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
             contentView.scroll(to: .zero)
         }
         reflectScrolledClipView(contentView)
-        fetch(renderer?.remoteImages ?? [], limit: theme.columnWidth)
+        fetch(remote)
         draw(renderer?.diagrams ?? [])
+        onShow()
     }
 
     // MARK: Diagrams
@@ -383,14 +673,15 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         if top > 0 { scroll(toCharacter: top, margin: 0) }
     }
 
-    private func fetch(_ images: [(attachment: NSTextAttachment, url: URL, width: CGFloat?, height: CGFloat?)], limit: CGFloat) {
-        for (attachment, url, width, height) in images {
-            URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+    private func fetch(_ images: [NativeRenderer.RemoteImage]) {
+        for request in images {
+            URLSession.shared.dataTask(with: request.url) { [weak self] data, _, _ in
                 guard let data, let picture = NSImage(data: data) else { return }
                 DispatchQueue.main.async {
-                    NativeRenderer.fit(picture, width: width, height: height, limit: limit)
-                    attachment.image = picture
-                    guard let self, let storage = self.textView.textStorage else { return }
+                    guard let self else { return }
+                    self.fetched[request.url] = picture
+                    self.place(picture, for: request)
+                    guard let storage = self.textView.textStorage else { return }
                     self.textView.layoutManager?.invalidateLayout(
                         forCharacterRange: NSRange(location: 0, length: storage.length), actualCharacterRange: nil)
                 }
@@ -398,7 +689,46 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         }
     }
 
+    /// A copy, sized as the document asked: one picture can appear at several sizes.
+    private func place(_ picture: NSImage, for request: NativeRenderer.RemoteImage) {
+        guard let copy = picture.copy() as? NSImage else { return }
+        NativeRenderer.fit(copy, width: request.width, height: request.height, limit: theme.columnWidth)
+        request.place(copy)
+    }
+
+    // A picture for one appearance takes its size in that appearance. Laying the text out again is
+    // not enough: one that took no room before stays undrawn, so the text counts as changed.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        guard appearanceImages, let storage = textView.textStorage else { return }
+        storage.beginEditing()
+        storage.edited(.editedAttributes, range: NSRange(location: 0, length: storage.length), changeInLength: 0)
+        storage.endEditing()
+    }
+
     // MARK: Moving around
+
+    /// Where the reader is, for going back to later: the first character of the topmost line
+    /// that is mostly in view.
+    var place: Int {
+        let top = topCharacter()
+        guard top > 0, let layout = textView.layoutManager else { return top }
+        var line = NSRange()
+        let rect = layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: top), effectiveRange: &line, withoutAdditionalLayout: true)
+        let visibleTop = contentView.bounds.minY - textView.textContainerOrigin.y
+        guard visibleTop > rect.midY, NSMaxRange(line) < layout.numberOfGlyphs else { return top }
+        return layout.characterIndexForGlyph(at: NSMaxRange(line))
+    }
+
+    /// Where a heading starts in the text.
+    func location(of anchor: String) -> Int? { anchors[anchor] }
+
+    /// Scrolls to a character, as one `topCharacter` gave, once the document is all there.
+    func go(to place: Int) {
+        if rendering { return pendingPlace = place }
+        guard let length = textView.textStorage?.length, length > 0 else { return }
+        scroll(toCharacter: min(place, length - 1), margin: 0)
+    }
 
     /// Scrolls to the heading a #fragment names.
     func jump(to anchor: String) {
@@ -418,6 +748,13 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         let top = layout.boundingRect(forGlyphRange: glyphs, in: container).minY + textView.textContainerOrigin.y
         var target = contentView.bounds
         target.origin = NSPoint(x: 0, y: top - margin)
+        // The view grows as the text below is laid out in the background, and a scroll past its
+        // end stops short, so a place further down than it has grown yet is laid out first.
+        if target.maxY > textView.frame.height {
+            layout.ensureLayout(forBoundingRect: NSRect(x: 0, y: target.minY - textView.textContainerOrigin.y,
+                                                        width: container.size.width, height: target.height), in: container)
+            textView.sizeToFit()
+        }
         contentView.scroll(to: contentView.constrainBoundsRect(target).origin)   // not past either end
         reflectScrolledClipView(contentView)
     }

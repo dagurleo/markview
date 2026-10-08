@@ -1,5 +1,22 @@
 # Changes
 
+## Unreleased
+
+- An outline of the document's headings beside the page: View > Show Outline (⌃⌘S). It
+  marks the section being read, and clicking a heading goes to it.
+- Documents reopen where they were last read.
+- Pointing at a link shows where it leads in the corner of the window. Code blocks have a
+  copy button, and a heading's context menu has Copy Link to Heading.
+- A `markview` command opens files from a terminal, or shows Markdown piped to it.
+- READMEs' images for light and dark windows show the right one, and switch with the
+  appearance: `<picture>` elements with `prefers-color-scheme` sources, and images marked
+  `#gh-light-mode-only` or `#gh-dark-mode-only`, of which only one now shows.
+- A file in Latin-1 or another older encoding no longer turns garbled when it changes on disk.
+- Images from the web stay in place when the page is shown again, after a save or a change
+  of settings, instead of being fetched anew.
+- Links to headings far down a large document now land on the heading rather than a
+  screen short of it.
+
 ## 0.2.0
 
 - Settings (⌘,) in the Markview menu. Choose one of twelve themes (GitHub, Solarized,

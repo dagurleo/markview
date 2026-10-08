@@ -1,0 +1,22 @@
+#!/bin/sh
+# Opens Markdown files in Markview from a terminal:
+#   markview README.md docs/*.md
+#   some-command | markview          shows what is piped in
+# Homebrew's cask links it onto the PATH as `markview`. Without Homebrew, link it yourself:
+#   ln -s /Applications/Markview.app/Contents/Resources/markview /usr/local/bin/markview
+set -e
+case "$1" in
+  -h|--help)
+    echo "usage: markview [file ...]     open Markdown files in Markview"
+    echo "       command | markview      show Markdown piped in"
+    exit 0 ;;
+esac
+# This script lives in Markview.app/Contents/Resources, perhaps behind a link.
+script=$(readlink -f "$0")
+app=${script%/Contents/Resources/markview}
+if [ $# -eq 0 ] && [ ! -t 0 ]; then
+  folder=$(mktemp -d -t markview)
+  cat > "$folder/Piped.md"
+  exec open -a "$app" "$folder/Piped.md"
+fi
+exec open -a "$app" "$@"

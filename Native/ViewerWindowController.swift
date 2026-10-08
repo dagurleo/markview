@@ -3,8 +3,23 @@ import UniformTypeIdentifiers
 
 final class ViewerWindowController: NSWindowController, DocumentOutline, DocumentActions {
     private let markdownView: MarkdownView
+    private let outline = OutlineSidebar()
+    private let outlineItem: NSSplitViewItem
+    private let divider = OutlineSplitView()
+    /// A heading chosen in the outline stays marked while the page stays where it went: near
+    /// the end of a document the page cannot bring it to the top.
+    private var chosen: (index: Int, top: CGFloat)?
+    /// Scripted checks show no outline, unless asked, and leave its setting alone.
+    private let scripted = ProcessInfo.processInfo.environment["MARKVIEW_SNAPSHOT"] != nil
     private var didRunSmokeTestHooks = false
     private var showingSource = false
+    /// Scripted checks open documents at the top and leave the places alone, unless asked.
+    private let keepsPlace = ProcessInfo.processInfo.environment["MARKVIEW_SNAPSHOT"] == nil
+        || ProcessInfo.processInfo.environment["MARKVIEW_KEEP_PLACE"] != nil
+    private var pendingPlace: DispatchWorkItem?
+    /// Where the document was last read, gone back to once the window is on screen: until
+    /// then its lines have not settled where they will be.
+    private var placeToRestore: Int?
 
     var headings: [Heading] { markdownView.headings }
 
@@ -18,14 +33,61 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         window.contentMinSize = NSSize(width: 360, height: 240)
         window.titlebarAppearsTransparent = true
         window.backgroundColor = markdownView.theme.background
-        window.contentView = markdownView
+
+        // The outline and the page side by side; the outline keeps its width as the window resizes.
+        let split = NSSplitViewController()
+        divider.isVertical = true
+        divider.dividerStyle = .thin
+        divider.color = markdownView.theme.border
+        split.splitView = divider
+        outlineItem = NSSplitViewItem(viewController: outline)
+        outlineItem.canCollapse = true
+        outlineItem.minimumThickness = 150
+        outlineItem.maximumThickness = 400
+        outlineItem.holdingPriority = NSLayoutConstraint.Priority(260)
+        let page = NSViewController()
+        page.view = markdownView
+        let pageItem = NSSplitViewItem(viewController: page)
+        pageItem.minimumThickness = 280
+        split.addSplitViewItem(outlineItem)
+        split.addSplitViewItem(pageItem)
+        split.view.frame = frame
+        if !scripted { divider.autosaveName = "Outline" }
+        outlineItem.isCollapsed = scripted ? ProcessInfo.processInfo.environment["MARKVIEW_OUTLINE"] == nil
+            : !UserDefaults.standard.bool(forKey: "showsOutline")
+        window.contentViewController = split
+        window.setContentSize(frame.size)
         window.center()
         super.init(window: window)
 
         let zoom = UserDefaults.standard.double(forKey: "pageZoom")
         markdownView.magnification = zoom > 0 ? zoom : 1
         markdownView.open = { [weak self] url in self?.open(url) }
+        markdownView.onScroll = { [weak self] in
+            self?.scrolled()
+            self?.markCurrentHeading()
+        }
+        markdownView.onShow = { [weak self] in
+            guard let self else { return }
+            outline.show(markdownView.headings)
+            markCurrentHeading()
+        }
+        outline.onSelect = { [weak self] heading in
+            guard let self else { return }
+            markdownView.jump(to: heading.anchor)
+            self.window?.makeFirstResponder(markdownView.textView)
+            if let index = outline.headings.firstIndex(where: { $0.anchor == heading.anchor }) {
+                chosen = (index, markdownView.contentView.bounds.minY)
+                outline.mark(index)
+            }
+        }
         windowFrameAutosaveName = "Viewer"
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
+            self?.rememberPlace()
+        }
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.rememberPlace()
+        }
     }
 
     @available(*, unavailable)
@@ -34,6 +96,8 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     override var document: AnyObject? {
         didSet {
             render()
+            // A #heading the document was opened at comes after this, and wins.
+            if keepsPlace, let file = (document as? NSDocument)?.fileURL { placeToRestore = Places.place(of: file) }
             if document != nil, !didRunSmokeTestHooks {
                 didRunSmokeTestHooks = true
                 runSmokeTestHooks()
@@ -45,7 +109,40 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     func show(_ theme: Theme) {
         markdownView.theme = theme
         window?.backgroundColor = theme.background
+        outline.apply(theme)
+        divider.color = theme.border
         render()
+    }
+
+    // MARK: Outline
+
+    /// The page narrows or widens as the outline comes and goes, and its lines rewrap; the
+    /// place in it is kept by its character, as when the window is resized.
+    @objc func toggleOutline(_ sender: Any?) {
+        let place = markdownView.place
+        NSAnimationContext.runAnimationGroup { _ in
+            outlineItem.animator().isCollapsed.toggle()
+        } completionHandler: { [self] in
+            if place > 0 { markdownView.go(to: place) } else { markdownView.contentView.scroll(to: .zero) }
+            markCurrentHeading()
+        }
+        if !scripted { UserDefaults.standard.set(!outlineItem.isCollapsed, forKey: "showsOutline") }
+    }
+
+    /// The heading being read is the last one to start above a point a little below the top of
+    /// the page, so a heading just scrolled to counts as read.
+    private func markCurrentHeading() {
+        guard !outlineItem.isCollapsed else { return }
+        if let chosen, chosen.top == markdownView.contentView.bounds.minY { return outline.mark(chosen.index) }
+        chosen = nil
+        let probe = markdownView.topCharacter(offset: 40)
+        var current: Int?
+        for (index, heading) in outline.headings.enumerated() {
+            guard let location = markdownView.location(of: heading.anchor) else { continue }
+            if location > probe { break }
+            current = index
+        }
+        outline.mark(current)
     }
 
     func render() {
@@ -57,6 +154,29 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         }
     }
 
+    // MARK: Place
+
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
+        guard let place = placeToRestore else { return }
+        placeToRestore = nil
+        DispatchQueue.main.async { self.markdownView.go(to: place) }
+    }
+
+    private func scrolled() {
+        pendingPlace?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.rememberPlace() }
+        pendingPlace = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    /// Not while the source shows, whose characters are not the page's, nor while a large
+    /// document is still on its way to the place it opens at.
+    private func rememberPlace() {
+        guard keepsPlace, !showingSource, !markdownView.rendering, let file = (document as? NSDocument)?.fileURL else { return }
+        Places.remember(markdownView.place, of: file)
+    }
+
     // MARK: Source
 
     @objc func toggleSource(_ sender: Any?) {
@@ -66,6 +186,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
 
     @objc func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(toggleSource(_:)) { item.state = showingSource ? .on : .off }
+        if item.action == #selector(toggleOutline(_:)) { item.title = outlineItem.isCollapsed ? "Show Outline" : "Hide Outline" }
         return true
     }
 
@@ -193,6 +314,8 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     ///   MARKVIEW_PDF=<pdf path>              also export the page as a PDF
     ///   MARKVIEW_SETTINGS=<png path>         also capture the Settings window
     ///   MARKVIEW_SETTINGS_PANE=<n>           on its nth pane, counting from 0
+    ///   MARKVIEW_KEEP_PLACE=1                open at the place last read and remember it, as the app does
+    ///   MARKVIEW_OUTLINE=1                   show the outline beside the page
     private func runSmokeTestHooks() {
         let environment = ProcessInfo.processInfo.environment
         guard let path = environment["MARKVIEW_SNAPSHOT"] else { return }
@@ -234,8 +357,16 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            // At twice the size whatever display the window is on, so that snapshots compare.
             func write(_ view: NSView?, to path: String?) {
-                guard let view, let path, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+                guard let view, let path, var rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+                let width = Int(view.bounds.width * 2), height = Int(view.bounds.height * 2)
+                if rep.pixelsWide < width, let larger = NSBitmapImageRep(
+                    bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                    isPlanar: false, colorSpaceName: .calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0)?.retagging(with: rep.colorSpace) {
+                    larger.size = view.bounds.size
+                    rep = larger
+                }
                 view.cacheDisplay(in: view.bounds, to: rep)
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
             }

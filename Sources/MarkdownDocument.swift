@@ -16,13 +16,19 @@ final class MarkdownDocument: NSDocument {
     }
 
     override func read(from data: Data, ofType typeName: String) throws {
-        // UTF-8 first; a file in another encoding is detected rather than shown with ? marks.
+        markdown = Self.text(of: data)
+    }
+
+    /// UTF-8 first; a file in another encoding is detected rather than shown with ? marks, and
+    /// a byte order mark is dropped. The same when the file is read again after a change.
+    private static func text(of data: Data) -> String {
         var decoded: NSString?
         let suggested = [NSUTF8StringEncoding, NSUTF16StringEncoding, NSISOLatin1StringEncoding, NSWindowsCP1252StringEncoding, NSMacOSRomanStringEncoding]
         _ = NSString.stringEncoding(for: data, encodingOptions: [.suggestedEncodingsKey: suggested, .useOnlySuggestedEncodingsKey: true],
                                     convertedString: &decoded, usedLossyConversion: nil)
-        markdown = (decoded as String?) ?? String(decoding: data, as: UTF8.self)
-        if markdown.hasPrefix("\u{FEFF}") { markdown.removeFirst() }
+        var text = (decoded as String?) ?? String(decoding: data, as: UTF8.self)
+        if text.hasPrefix("\u{FEFF}") { text.removeFirst() }
+        return text
     }
 
     override func makeWindowControllers() {
@@ -46,7 +52,7 @@ final class MarkdownDocument: NSDocument {
 
     private func reloadFromDisk() {
         guard let url = fileURL, let data = try? Data(contentsOf: url) else { return }
-        let text = String(decoding: data, as: UTF8.self)
+        let text = Self.text(of: data)
         guard text != markdown else { return }
         markdown = text
         for case let viewer as ViewerWindowController in windowControllers { viewer.render() }

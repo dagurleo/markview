@@ -7,8 +7,16 @@ final class NativeRenderer {
     private(set) var anchors: [String: Int] = [:]
     /// The headings in order, for the Go menu.
     private(set) var headings: [Heading] = []
-    /// Images that still have to be fetched from the network, with any size the document asked for.
-    private(set) var remoteImages: [(attachment: NSTextAttachment, url: URL, width: CGFloat?, height: CGFloat?)] = []
+    /// An image still to be fetched from the network, with any size the document asked for,
+    /// and where to put it once it is in.
+    struct RemoteImage {
+        let url: URL
+        let width: CGFloat?, height: CGFloat?
+        let place: (NSImage) -> Void
+    }
+    private(set) var remoteImages: [RemoteImage] = []
+    /// Whether any picture depends on the appearance (see AppearanceAttachment).
+    private(set) var hasAppearanceImages = false
     /// Diagrams still to be drawn, in the order their placeholders appear. Math is drawn as it is rendered.
     private(set) var diagrams: [Diagram] = []
     /// Whether any code block is a drawing, which the view fits to its column (see `drawing`).
@@ -36,6 +44,8 @@ final class NativeRenderer {
     private struct InlineStyle {
         var bold = 0, italic = 0, mono = 0, sub = 0, sup = 0, strike = 0, underline = 0, mark = 0
         var links: [URL?] = []
+        /// Inside a <picture>, the images its <source>s name for light and dark windows.
+        var sources: (light: URL?, dark: URL?)?
         var link: URL? { links.last ?? nil }
 
         mutating func apply(_ tag: HTMLTag, baseURL: URL) {
@@ -52,6 +62,15 @@ final class NativeRenderer {
             case "a":
                 if tag.closing { if !links.isEmpty { links.removeLast() } }
                 else { links.append(tag.attributes["href"].flatMap { URL(string: $0, relativeTo: baseURL)?.absoluteURL }) }
+            case "picture":
+                sources = tag.closing ? nil : (nil, nil)
+            case "source":
+                // The first candidate of a srcset will do: the page is drawn at one size.
+                guard !tag.closing, sources != nil, let candidate = tag.attributes["srcset"]?.split(separator: ",").first?.split(separator: " ").first,
+                      let url = URL(string: String(candidate), relativeTo: baseURL)?.absoluteURL else { break }
+                let media = (tag.attributes["media"] ?? "").lowercased().replacingOccurrences(of: " ", with: "")
+                if media.contains("prefers-color-scheme:dark") { sources?.dark = url }
+                else if media.contains("prefers-color-scheme:light") { sources?.light = url }
             default: break
             }
         }
@@ -424,6 +443,7 @@ final class NativeRenderer {
         let range = appendBoxed(code, font: drawing ? Theme.drawingFont(size: codeSize) : theme.font(size: codeSize, mono: true),
                                 color: theme.text, fill: theme.subtle, border: nil, inside: quotes, indent: indent, wraps: !drawing)
         if drawing { markDrawing(NSRange(location: range.location, length: range.length + 1), size: codeSize, room: width - theme.scaled(32)) }
+        if kind != "mermaid" { output.addAttribute(NativeRenderer.code, value: code, range: range) }
         guard kind == "mermaid" else {
             if let language, !language.isEmpty, kind != "math" { engine?.highlight(output, in: range, language: language) }
             return
@@ -443,6 +463,9 @@ final class NativeRenderer {
         block.firstLineHeadIndent = indent
         return block
     }
+
+    /// Attribute key marking a code block's text, whose value is the code, for its copy button.
+    static let code = NSAttributedString.Key("MarkviewCode")
 
     /// Attribute key marking a drawing: a code block drawn with box-drawing characters, such as
     /// a flow chart or the output of `tree`. Wrapping would tear it apart, so its lines never
@@ -720,10 +743,22 @@ final class NativeRenderer {
         for fitted in tables { fitted.table.setContentWidth(min(100, fitted.width / width * 100), type: .percentageValueType) }
     }
 
-    /// A copy of the text with tables of its own, fitted to a text container this wide. Tables
-    /// are objects the text only points to, and the view's change with the view's width.
+    /// A copy of the text with tables of its own, fitted to a text container this wide, and the
+    /// pictures for light pages, as a page for printing wants. Tables are objects the text only
+    /// points to, and the view's change with the view's width.
     static func copy(_ text: NSAttributedString, tables fitted: [FittedTable], fittedTo width: CGFloat) -> NSTextStorage {
         let copy = NSTextStorage(attributedString: text)
+        var pictures: [(range: NSRange, light: NSImage?)] = []
+        copy.enumerateAttribute(.attachment, in: NSRange(location: 0, length: copy.length)) { value, range, _ in
+            if let picture = value as? AppearanceAttachment { pictures.append((range, picture.light)) }
+        }
+        for (range, light) in pictures.reversed() {
+            guard let light else { copy.replaceCharacters(in: range, with: ""); continue }
+            let plain = FittingAttachment()
+            plain.clearsPadding = false
+            plain.image = light
+            copy.addAttribute(.attachment, value: plain, range: range)
+        }
         var tables: [ObjectIdentifier: NSTextTable] = [:], cells: [ObjectIdentifier: NSTextTableBlock] = [:]
         func table(_ old: NSTextTable) -> NSTextTable {
             if let table = tables[ObjectIdentifier(old)] { return table }
@@ -855,7 +890,7 @@ final class NativeRenderer {
                 case "img":
                     guard !tag.closing, let src = tag.attributes["src"], let url = URL(string: src, relativeTo: baseURL) else { continue }
                     text.append(image(url.absoluteURL, alt: tag.attributes["alt"] ?? "", width: dimension(tag.attributes["width"]),
-                                      height: dimension(tag.attributes["height"]), link: style.link))
+                                      height: dimension(tag.attributes["height"]), link: style.link, sources: style.sources))
                 case "p", "div", "center", "section", "article", "header", "footer", "main", "nav", "aside", "figure", "figcaption",
                      "blockquote", "dl", "dt", "dd", "address":
                     flush()
@@ -973,7 +1008,7 @@ final class NativeRenderer {
                     case "img":
                         if let src = tag.attributes["src"], let url = URL(string: src, relativeTo: baseURL) {
                             result.append(image(url.absoluteURL, alt: tag.attributes["alt"] ?? "", width: dimension(tag.attributes["width"]),
-                                                height: dimension(tag.attributes["height"]), link: style.link))
+                                                height: dimension(tag.attributes["height"]), link: style.link, sources: style.sources))
                         }
                     default:
                         style.apply(tag, baseURL: baseURL)
@@ -1068,21 +1103,56 @@ final class NativeRenderer {
         return result
     }
 
-    private func image(_ url: URL, alt: String, width: CGFloat? = nil, height: CGFloat? = nil, link: URL? = nil) -> NSAttributedString {
-        let attachment = FittingAttachment()
-        attachment.clearsPadding = false
-        if url.isFileURL, let picture = NSImage(contentsOf: url) {
-            NativeRenderer.fit(picture, width: width, height: height, limit: theme.columnWidth)
-            attachment.image = picture
-        } else if ["http", "https"].contains(url.scheme) {
-            remoteImages.append((attachment, url, width, height))
-            attachment.image = NSImage(size: NSSize(width: 1, height: 1))
+    /// A picture, or its alt text if it cannot be shown. READMEs on GitHub often carry one for
+    /// each appearance: in a <picture> whose sources name them, or as two images marked
+    /// #gh-light-mode-only and #gh-dark-mode-only. Those take an AppearanceAttachment.
+    private func image(_ url: URL, alt: String, width: CGFloat? = nil, height: CGFloat? = nil, link: URL? = nil,
+                       sources: (light: URL?, dark: URL?)? = nil) -> NSAttributedString {
+        var light: URL? = url, dark: URL? = url
+        switch url.fragment {
+        case "gh-dark-mode-only": light = nil
+        case "gh-light-mode-only": dark = nil
+        default: break
+        }
+        if let sources, sources.light != nil || sources.dark != nil {
+            light = sources.light ?? url
+            dark = sources.dark ?? url
+        }
+        let attachment: NSTextAttachment
+        if let url = light, light == dark {
+            let fitting = FittingAttachment()
+            fitting.clearsPadding = false
+            guard let picture = picture(url, width: width, height: height, place: { fitting.image = $0 }) else { return altText(alt) }
+            fitting.image = picture
+            attachment = fitting
         } else {
-            return NSAttributedString(string: alt, attributes: [.font: theme.font(size: theme.bodySize), .foregroundColor: theme.muted])
+            let modal = AppearanceAttachment()
+            modal.light = light.flatMap { picture($0, width: width, height: height) { [weak modal] in modal?.light = $0 } }
+            modal.dark = dark.flatMap { picture($0, width: width, height: height) { [weak modal] in modal?.dark = $0 } }
+            guard modal.light != nil || modal.dark != nil else { return altText(alt) }
+            hasAppearanceImages = true
+            attachment = modal
         }
         let result = NSMutableAttributedString(attachment: attachment)
         if let link { result.addAttribute(.link, value: link, range: NSRange(location: 0, length: result.length)) }
         return result
+    }
+
+    /// A local picture at once, or a stand-in for one from the web, which is fetched once the
+    /// text shows and handed to `place`. Nil for one that cannot be shown.
+    private func picture(_ url: URL, width: CGFloat?, height: CGFloat?, place: @escaping (NSImage) -> Void) -> NSImage? {
+        if url.isFileURL {
+            guard let picture = NSImage(contentsOf: URL(fileURLWithPath: url.path)) else { return nil }
+            NativeRenderer.fit(picture, width: width, height: height, limit: theme.columnWidth)
+            return picture
+        }
+        guard ["http", "https"].contains(url.scheme) else { return nil }
+        remoteImages.append(RemoteImage(url: url, width: width, height: height, place: place))
+        return NSImage(size: NSSize(width: 1, height: 1))
+    }
+
+    private func altText(_ alt: String) -> NSAttributedString {
+        NSAttributedString(string: alt, attributes: [.font: theme.font(size: theme.bodySize), .foregroundColor: theme.muted])
     }
 
     /// A text block has no width of its own, and without one its text wraps after every character.

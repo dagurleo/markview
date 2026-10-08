@@ -17,6 +17,10 @@ and drag Markview to Applications. It is signed and notarized, and runs on macOS
 or later. Open it once so that macOS picks up its Quick Look preview; "Make Default
 Markdown Viewer" in the Markview menu has Markdown files open in it.
 
+`markview README.md` opens files from a terminal, and `some-command | markview` shows
+what is piped in. The Homebrew cask puts the command on the PATH; otherwise link it:
+`ln -s /Applications/Markview.app/Contents/Resources/markview /usr/local/bin/markview`.
+
 Markview updates itself through [Sparkle](https://sparkle-project.org). On its second
 launch it asks whether to check for updates automatically; "Check for Updates…" in the
 Markview menu checks at any time. Version 0.1.0 predates this and is updated by hand once.
@@ -28,7 +32,9 @@ Markview menu checks at any time. Version 0.1.0 predates this and is updated by 
   blocks highlighted by highlight.js running in JavaScriptCore, images (local and
   remote), front matter, and the HTML a README tends to use (centred blocks,
   `<img>` with a size, `<details>`, HTML tables, inline tags). Badge links
-  (`[![alt](image)](url)`) work.
+  (`[![alt](image)](url)`) work, and so do a README's images for light and dark windows
+  (`<picture>` with `prefers-color-scheme` sources, and `#gh-light-mode-only` /
+  `#gh-dark-mode-only`), which switch with the appearance.
 - Draws math and diagrams natively, in the light or dark colours of the window:
   - Math is TeX between `$…$`, `$$…$$` or in a ```` ```math ```` block, as on GitHub,
     drawn by SwaTex, a Swift version of KaTeX with KaTeX's fonts, as the document
@@ -54,6 +60,12 @@ Markview menu checks at any time. Version 0.1.0 predates this and is updated by 
   Quick Look previews follow them too. Printing and PDFs use the theme's light colours.
 - Quick Look preview through an app extension. Links in the preview go through a
   small XPC helper because the extension's sandbox cannot open them itself.
+- An outline of the headings beside the page (View > Show Outline, ⌃⌘S), marking the
+  section being read; clicking a heading goes to it.
+- Reopens each document where it was last read (for the last 200 documents).
+- Shows where a link leads in the corner of the window while the pointer is over it,
+  puts a copy button on code blocks, and offers "Copy Link to Heading" in a heading's
+  context menu (as `file.md#heading`, the way Markdown links to it).
 - Find (⌘F), zoom (⌘+ ⌘- ⌘0), a Go menu listing the headings, View Source (⌘U),
   Print (⌘P) and Export as PDF (⇧⌘E), Open With, Reveal in Finder (⇧⌘R), Copy
   Path (⌥⌘C), Open Recent, and "Make Default Markdown Viewer" in the app menu.
@@ -130,16 +142,27 @@ Installed copies read the appcast from `releases/latest/download/appcast.xml`
 
 | Folder | Contents |
 |---|---|
-| `Sources/` | The app's shell: app delegate and menu, document, file watcher, link rules, and the Settings window (SwiftUI) |
+| `Sources/` | The app's shell: app delegate and menu, document, file watcher, link rules, the outline sidebar, the places documents were last read, and the Settings window (SwiftUI) |
 | `Native/` | The renderer: `MarkdownView`, `NativeRenderer`, `HighlightEngine`, `Math`, `Diagrams`, `Theme` and its `Palette`s, `Settings`, the window controller and the Quick Look controller |
 | `QuickLook/` | The extension's plist and entitlements, and the `LinkOpener` XPC service |
 | `Resources/` | Icons, and the vendored highlight.js and emoji list. The Quick Look extension has its own copy of the `vendor` folder |
 | `Vendor/MermaidKit/` | [MermaidKit](https://github.com/2389-research/MermaidKit) 2.2.0 (85fdc08), which draws diagrams: its `MermaidLayout` and `MermaidRender` sources as released, less `MermaidView.swift`, which needs SwiftUI. To update, copy both folders from a new release and drop that file again |
 | `Vendor/SwaTex/` | [SwaTex](https://github.com/PhraseHQ/SwaTex) 0.5.0 (2b38d0b), which draws math: its `SwaTex` sources less the docs, and from `SwaTexRender` only `DisplayListRenderer.swift`, `KaTeXFontProvider.swift` and the fonts. Markview's changes are marked `Markview:` in the code: a `Mutex` that works on macOS 14, fonts read from the app, and KaTeX's `align` spacing, `\dots`, `\tag` text and placement, and equation numbering. To update, copy the same files from a new release and carry over what `grep -rn Markview: Vendor/SwaTex` finds |
-| `scripts/` | `release.sh`, which builds, notarizes and zips a release, and `make-icon.swift`, which draws the app and document icons |
-| `sample/` | Documents to try: `sample.md` has a bit of everything; `text.md`, `images.md`, `tables.md`, `code.md`, `html.md`, `extensions.md`, `math.md` and `diagrams.md` each show one kind of element |
+| `scripts/` | `check.sh` and `compare.swift`, which compare this build's rendering with a release's; `release.sh`, which builds, notarizes and zips a release; and `make-icon.swift`, which draws the app and document icons |
+| `sample/` | Documents to try: `sample.md` has a bit of everything; `text.md`, `images.md`, `tables.md`, `code.md`, `html.md`, `extensions.md`, `math.md`, `diagrams.md` and `appearance.md` (images for light and dark windows) each show one kind of element |
 
 ## Scripted checks
+
+```sh
+scripts/check.sh          # or scripts/check.sh 0.2.0
+```
+
+renders every sample with `build/Markview.app` and with a released version (the newest, or
+the one named, downloaded once into `build/check`), as a PDF and as light and dark
+snapshots, and compares them pixel by pixel. Run it after changing the renderer and before
+a release: when nothing is meant to change, everything comes out the same. Both copies use
+the default settings, whatever Settings holds; the renderings are left in `build/check`, and
+each difference as an image with the changed pixels in red in `build/check/diff`.
 
 The app reads a few environment variables so a shell script can
 exercise it (see `runSmokeTestHooks` in `Native/ViewerWindowController.swift`):
@@ -148,8 +171,10 @@ exercise it (see `runSmokeTestHooks` in `Native/ViewerWindowController.swift`):
 MARKVIEW_SNAPSHOT=/tmp/page.png build/Markview.app/Contents/MacOS/Markview sample/sample.md
 ```
 
-renders the page to a PNG, prints the open documents and quits after
-`MARKVIEW_SNAPSHOT_DELAY` seconds (default 0.5). `MARKVIEW_CHROME_SNAPSHOT`
+renders the page to a PNG at twice its size, prints the open documents and quits after
+`MARKVIEW_SNAPSHOT_DELAY` seconds (default 0.5). Such runs open documents at the top, show
+no outline and leave both settings alone, unless `MARKVIEW_KEEP_PLACE=1` or
+`MARKVIEW_OUTLINE=1` asks for them. `MARKVIEW_CHROME_SNAPSHOT`
 captures the whole window, `MARKVIEW_APPEARANCE=light|dark` overrides the
 appearance, `MARKVIEW_FIND=<text>` runs a find, `MARKVIEW_ANCHOR=<slug>` jumps to a
 heading, `MARKVIEW_LINK=<text>` follows the first link containing the text,
