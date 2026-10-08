@@ -2,6 +2,9 @@
 
 ## 0.4.0 (not released yet)
 
+- Links to other Markdown files open in the same window, as in a browser; ⌘-click
+  opens a new one. Go > Back (⌘[) and Forward (⌘]), or a mouse's side buttons, return
+  to the exact place left, also after a jump to a heading.
 - Clicking a picture shows it full size in a Quick Look panel, and clicking a Mermaid
   diagram shows it as a PDF that stays sharp however far it is zoomed.
 

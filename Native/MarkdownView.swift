@@ -415,6 +415,10 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
     let textView: ColumnTextView
     /// Called with a clicked link that leads out of the document, or a file dropped on it.
     var open: (URL) -> Void = { _ in }
+    /// Called with a file dropped on the page, in place of `open`, if set.
+    var openDropped: ((URL) -> Void)?
+    /// Called before a link jumps to a heading in the document itself.
+    var willFollowLink: () -> Void = {}
     /// Called with a file to show full size, and where on screen its picture is, when a picture
     /// or diagram is clicked. Nil where there is nothing to show it in, as in Quick Look.
     var onPreview: ((URL, NSRect) -> Void)? {
@@ -475,7 +479,10 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         textView.isVerticallyResizable = true
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.registerForDraggedTypes([.fileURL])
-        textView.onDrop = { [weak self] files in files.forEach { self?.open($0) } }
+        textView.onDrop = { [weak self] files in
+            guard let self else { return }
+            files.forEach(openDropped ?? open)
+        }
         textView.delegate = self
 
         documentView = textView
@@ -625,13 +632,15 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
     /// A small document is rendered at once. A large one shows its beginning straight
     /// away and is rendered in full on a background thread, then swapped in.
     func show(_ markdown: String, baseURL: URL) {
+        // The same document shown again keeps its place; another starts at its top.
+        let continuing = baseURL == self.baseURL
         self.baseURL = baseURL
         generation += 1
         let generation = generation
         let theme = theme
         let large = markdown.utf8.count > 256 * 1024
 
-        if !large || textView.string.isEmpty {
+        if !large || textView.string.isEmpty || !continuing {
             var beginning = markdown
             if large {
                 // Cut at a paragraph break so the beginning is rarely caught mid-block.
@@ -639,7 +648,7 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
                 if let cut = markdown.range(of: "\n\n", range: from..<markdown.endIndex) { beginning = String(markdown[..<cut.lowerBound]) }
             }
             let renderer = NativeRenderer(baseURL: baseURL, theme: theme)
-            replaceText(with: renderer.render(beginning), from: renderer, keepingPlace: !large)
+            replaceText(with: renderer.render(beginning), from: renderer, keepingPlace: !large && continuing)
         }
         rendering = large
         guard large else { return }
@@ -833,6 +842,11 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
     func go(to place: Int) {
         if rendering { return pendingPlace = place }
         guard let length = textView.textStorage?.length, length > 0 else { return }
+        // The top of the document is the top of the page, margin and all.
+        guard place > 0 else {
+            contentView.scroll(to: .zero)
+            return reflectScrolledClipView(contentView)
+        }
         scroll(toCharacter: min(place, length - 1), margin: 0)
     }
 
@@ -868,7 +882,12 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
     // A #heading link in this document is followed here; any other link is the owner's to open.
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
         guard let target = link as? URL else { return true }
-        if target.isFileURL, target.path == baseURL?.path, let fragment = target.fragment { jump(to: fragment) } else { open(target) }
+        if target.isFileURL, target.path == baseURL?.path, let fragment = target.fragment {
+            willFollowLink()
+            jump(to: fragment)
+        } else {
+            open(target)
+        }
         return true
     }
 }

@@ -44,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         NSDocumentController.shared.openDocument(withContentsOf: file, display: true) { document, _, error in
             if let error { NSApp.presentError(error) }
             if let fragment, let controller = document?.windowControllers.first as? ViewerWindowController {
-                controller.jump(to: fragment)
+                controller.open(fragment: fragment)
             }
         }
     }
@@ -201,10 +201,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         }
     }
 
-    /// Next and Previous Heading head the Go menu, above the headings themselves. They are there
-    /// from the start, so their keys work before the menu is first opened.
+    /// Back, Forward, Next and Previous Heading head the Go menu, above the headings themselves.
+    /// They are there from the start, so their keys work before the menu is first opened.
     private func addHeadingSteps(to menu: NSMenu) {
         func arrow(_ key: Int) -> String { String(Character(Unicode.Scalar(UInt32(key))!)) }
+        menu.add("Back", #selector(ViewerWindowController.goBack(_:)), key: "[")
+        menu.add("Forward", #selector(ViewerWindowController.goForward(_:)), key: "]")
+        menu.addItem(.separator())
         menu.add("Next Heading", #selector(ViewerWindowController.goToNextHeading(_:)), key: arrow(NSDownArrowFunctionKey), modifiers: [.command, .option])
         menu.add("Previous Heading", #selector(ViewerWindowController.goToPreviousHeading(_:)), key: arrow(NSUpArrowFunctionKey), modifiers: [.command, .option])
         menu.addItem(.separator())

@@ -66,6 +66,8 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         let zoom = UserDefaults.standard.double(forKey: "pageZoom")
         markdownView.magnification = zoom > 0 ? zoom : 1
         markdownView.open = { [weak self] url in self?.open(url) }
+        markdownView.openDropped = { [weak self] url in self?.openDropped(url) }
+        markdownView.willFollowLink = { [weak self] in self?.leaving() }
         markdownView.onPreview = { [weak self] file, frame in self?.showPreview(of: file, from: frame) }
         markdownView.onScroll = { [weak self] in
             self?.scrolled()
@@ -78,6 +80,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         }
         outline.onSelect = { [weak self] heading in
             guard let self, let index = headings.firstIndex(where: { $0.anchor == heading.anchor }) else { return }
+            leaving()
             show(headingAt: index)
             self.window?.makeFirstResponder(markdownView.textView)
         }
@@ -96,8 +99,9 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     override var document: AnyObject? {
         didSet {
             render()
-            // A #heading the document was opened at comes after this, and wins.
-            if keepsPlace, let file = (document as? NSDocument)?.fileURL { placeToRestore = Places.place(of: file) }
+            // A #heading the document was opened at comes after this, and wins. A document the
+            // window moves on to, as it follows a link, starts at its top instead.
+            if keepsPlace, window?.isVisible != true, let file = (document as? NSDocument)?.fileURL { placeToRestore = Places.place(of: file) }
             if document != nil, !didRunSmokeTestHooks {
                 didRunSmokeTestHooks = true
                 runSmokeTestHooks()
@@ -237,6 +241,8 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         if item.action == #selector(toggleSource(_:)) { item.state = showingSource ? .on : .off }
         if item.action == #selector(toggleOutline(_:)) { item.title = outlineItem.isCollapsed ? "Show Outline" : "Hide Outline" }
         if item.action == #selector(goToNextHeading(_:)) || item.action == #selector(goToPreviousHeading(_:)) { return !headings.isEmpty }
+        if item.action == #selector(goBack(_:)) { return !backStops.isEmpty }
+        if item.action == #selector(goForward(_:)) { return !forwardStops.isEmpty }
         return true
     }
 
@@ -306,15 +312,28 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     /// Markdown opens here, web links go to the browser, and any other local file
     /// is only revealed in Finder, so a link in a document can never launch an app
     /// or script. A file dropped on the window follows the same rules.
-    func jump(to anchor: String) { markdownView.jump(to: anchor) }
+    /// A heading chosen in the Go menu; the place left goes on the back list.
+    func jump(to anchor: String) {
+        leaving()
+        markdownView.jump(to: anchor)
+    }
 
+    /// The heading a document was opened at.
+    func open(fragment: String) { markdownView.jump(to: fragment) }
+
+    /// Another Markdown document opens in this window, as a browser follows a link, or with ⌘
+    /// held in a window of its own.
     private func open(_ url: URL) {
         if url.isFileURL {
             let file = URL(fileURLWithPath: url.path)
             if Links.markdownExtensions.contains(file.pathExtension.lowercased()) {
-                var target = URLComponents(url: file, resolvingAgainstBaseURL: false)
-                target?.fragment = url.fragment
-                AppDelegate.open(target?.url ?? file)
+                if NSApp.currentEvent?.modifierFlags.contains(.command) == true {
+                    var target = URLComponents(url: file, resolvingAgainstBaseURL: false)
+                    target?.fragment = url.fragment
+                    AppDelegate.open(target?.url ?? file)
+                } else {
+                    follow(file, to: url.fragment)
+                }
             } else if FileManager.default.fileExists(atPath: file.path) {
                 NSWorkspace.shared.activateFileViewerSelecting([file])
             } else {
@@ -322,6 +341,81 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
             }
         } else if Links.webSchemes.contains(url.scheme ?? "") {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// A file dropped on the page opens in a window of its own, as one dropped on the Dock icon does.
+    private func openDropped(_ url: URL) {
+        if url.isFileURL, Links.markdownExtensions.contains(url.pathExtension.lowercased()) { AppDelegate.open(url) } else { open(url) }
+    }
+
+    // MARK: Back and forward
+
+    /// A place to come back to: a document, and where in it.
+    private struct Stop {
+        let file: URL
+        let place: Int
+    }
+    private var backStops: [Stop] = [], forwardStops: [Stop] = []
+
+    private var here: Stop? {
+        (document as? NSDocument)?.fileURL.map { Stop(file: $0, place: showingSource ? 0 : markdownView.place) }
+    }
+
+    /// Before a link is followed or a heading chosen: the place left goes on the back list.
+    private func leaving() {
+        guard let here else { return }
+        backStops.append(here)
+        if backStops.count > 100 { backStops.removeFirst() }
+        forwardStops.removeAll()
+    }
+
+    private func follow(_ file: URL, to fragment: String?) {
+        leaving()
+        show(file) { [weak self] sameDocument in
+            if let fragment { self?.markdownView.jump(to: fragment) } else if sameDocument { self?.markdownView.go(to: 0) }
+        }
+    }
+
+    @objc func goBack(_ sender: Any?) {
+        guard let stop = backStops.popLast() else { return NSSound.beep() }
+        if let here { forwardStops.append(here) }
+        show(stop.file) { [weak self] _ in self?.markdownView.go(to: stop.place) }
+    }
+
+    @objc func goForward(_ sender: Any?) {
+        guard let stop = forwardStops.popLast() else { return NSSound.beep() }
+        if let here { backStops.append(here) }
+        show(stop.file) { [weak self] _ in self?.markdownView.go(to: stop.place) }
+    }
+
+    // A mouse's back and forward buttons do the same.
+    override func otherMouseDown(with event: NSEvent) {
+        switch event.buttonNumber {
+        case 3: goBack(nil)
+        case 4: goForward(nil)
+        default: super.otherMouseDown(with: event)
+        }
+    }
+
+    /// Shows a document in this window: the one on show, or another, opened if need be, which
+    /// the window then belongs to. The document it leaves closes if no other window shows it.
+    /// `then` runs once it shows, told whether it was already on show.
+    private func show(_ file: URL, then: @escaping (Bool) -> Void) {
+        if (document as? NSDocument)?.fileURL?.standardizedFileURL == file.standardizedFileURL { return then(true) }
+        NSDocumentController.shared.openDocument(withContentsOf: file, display: false) { [weak self] opened, _, error in
+            guard let self else { return }
+            guard let opened = opened as? MarkdownDocument else {
+                if let error { NSApp.presentError(error) }
+                return
+            }
+            rememberPlace()
+            showingSource = false
+            let previous = document as? NSDocument
+            previous?.removeWindowController(self)
+            opened.addWindowController(self)
+            if let previous, previous.windowControllers.isEmpty { previous.close() }
+            then(false)
         }
     }
 

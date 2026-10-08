@@ -54,6 +54,12 @@ Markview menu checks at any time. Version 0.1.0 predates this and is updated by 
   links go to the browser, and any other local file is only revealed in Finder,
   so a document can never launch an app or run a script. Files dropped on a
   window follow the same rules.
+- Browses like a browser: a link to another Markdown file opens in the same window
+  (⌘-click for a new one), and Go > Back and Forward (⌘[ ⌘], or a mouse's side
+  buttons) return to the exact place left, also after following a link to a heading
+  or choosing one in the outline.
+- Clicking a picture shows it full size in a Quick Look panel; a Mermaid diagram opens
+  as a PDF that stays sharp however far it is zoomed.
 - Settings (⌘,) choose the look: twelve themes (GitHub, Solarized, One, Monokai, Dracula,
   Nord, Tokyo Night, Catppuccin, Gruvbox, Ayu, Rosé Pine and Paper), each with a light and a dark side, light or dark whatever the
   system shows, the text size, which the whole page follows, the text and code fonts,
