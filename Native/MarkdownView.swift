@@ -1,19 +1,38 @@
 import AppKit
 
-/// The text of a document: a centred column of at most Theme.columnWidth that
+/// The text of a document: a centred column of at most `columnWidth` that
 /// also accepts files dropped on it.
 final class ColumnTextView: NSTextView {
     var onDrop: ([URL]) -> Void = { _ in }
+    /// The widest the column grows; a wider view leaves margins either side.
+    var columnWidth = Settings.defaultTheme.columnWidth {
+        didSet { if columnWidth != oldValue { setFrameSize(frame.size) } }
+    }
     /// Whether the text has drawings (see NativeRenderer.drawing). Finding them in a large document takes a while.
     private(set) var hasDrawings = false
     /// The text container width the drawings were last fitted to.
-    private var drawingsWidth = Theme.columnWidth
+    private var drawingsWidth = Settings.defaultTheme.columnWidth
+    private(set) var tables: [NativeRenderer.FittedTable] = []
+    /// The width the tables were last fitted to.
+    private var tablesWidth = Settings.defaultTheme.columnWidth
 
-    /// Called with new text, whose drawings the renderer fitted to a full column.
-    func textChanged(hasDrawings: Bool) {
+    /// Called with new text, whose drawings and tables the renderer fitted to a full column.
+    func textChanged(hasDrawings: Bool, tables: [NativeRenderer.FittedTable]) {
         self.hasDrawings = hasDrawings
-        drawingsWidth = Theme.columnWidth
+        self.tables = tables
+        drawingsWidth = columnWidth
+        tablesWidth = columnWidth
         fitDrawings()
+        fitTables()
+    }
+
+    /// Tables keep their natural width in a column narrower than the full one.
+    private func fitTables() {
+        guard !tables.isEmpty, let width = textContainer?.size.width, min(width, columnWidth) != tablesWidth else { return }
+        tablesWidth = min(width, columnWidth)
+        NativeRenderer.fitTables(tables, width: tablesWidth)
+        // A table's width is not an attribute of the text, so changing it tells the text system nothing.
+        layoutManager?.invalidateLayout(forCharacterRange: NSRange(location: 0, length: textStorage?.length ?? 0), actualCharacterRange: nil)
     }
 
     /// A window narrower than the column narrows the column, and the drawings with it.
@@ -31,11 +50,12 @@ final class ColumnTextView: NSTextView {
     override func setFrameSize(_ newSize: NSSize) {
         let clip = enclosingScrollView?.contentView
         let atTop = (clip?.bounds.origin.y ?? 1) <= 0
-        let inset = NSSize(width: max(40, floor((newSize.width - Theme.columnWidth) / 2)), height: 24)
+        let inset = NSSize(width: max(40, floor((newSize.width - columnWidth) / 2)), height: 24)
         if inset != textContainerInset { textContainerInset = inset }
         super.setFrameSize(newSize)
         // A large document's drawings wait for the end of a resize: finding them takes too long to do at every step.
         if !inLiveResize || (textStorage?.length ?? 0) < 1_000_000 { fitDrawings() }
+        fitTables()
         // When its width changes the text view keeps its first line in place, which at
         // the top of a document scrolls the margin above that line out of sight.
         if atTop, let clip, clip.bounds.origin.y != 0 {
@@ -104,14 +124,18 @@ final class ColumnTextView: NSTextView {
     }
 }
 
-/// An attachment that shrinks to the line it is on, so a figure drawn for the full column
-/// still fits a narrower window, such as a Quick Look preview. Figures are vector images,
+/// An attachment that shrinks to the line it is on, so a figure or picture sized for the full
+/// column still fits a narrower window, such as a Quick Look preview. Figures are vector images,
 /// so they stay sharp.
 final class FittingAttachment: NSTextAttachment {
+    /// Whether it keeps clear of the text container's padding, as a figure does. A picture
+    /// has always reached into it, and only shrinks once it is wider than the line itself.
+    var clearsPadding = true
+
     override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: NSRect,
                                    glyphPosition position: NSPoint, characterIndex charIndex: Int) -> NSRect {
         var bounds = super.attachmentBounds(for: textContainer, proposedLineFragment: lineFrag, glyphPosition: position, characterIndex: charIndex)
-        let room = lineFrag.width - 2 * (textContainer?.lineFragmentPadding ?? 0)
+        let room = lineFrag.width - (clearsPadding ? 2 * (textContainer?.lineFragmentPadding ?? 0) : 0)
         if room > 0, bounds.width > room { bounds.size = NSSize(width: room, height: bounds.height * room / bounds.width) }
         return bounds
     }
@@ -130,7 +154,7 @@ final class BoxedLayoutManager: NSLayoutManager {
         let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
         storage.enumerateAttribute(Self.box, in: characters) { value, range, _ in
             guard let color = value as? NSColor else { return }
-            let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont ?? NSFont.systemFont(ofSize: Theme.bodySize)
+            let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont ?? NSFont.systemFont(ofSize: 16)
             let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             enumerateLineFragments(forGlyphRange: glyphs) { fragment, _, _, fragmentGlyphs, _ in
                 let part = NSIntersectionRange(glyphs, fragmentGlyphs)
@@ -152,6 +176,11 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
     let textView: ColumnTextView
     /// Called with a clicked link that leads out of the document, or a file dropped on it.
     var open: (URL) -> Void = { _ in }
+    /// The colours, fonts and sizes documents are shown in. The background and the column
+    /// change at once; the text keeps its look until the document is shown again.
+    var theme = Settings.theme {
+        didSet { applyTheme() }
+    }
 
     private var anchors: [String: Int] = [:]
     /// The headings of the rendered document, in order.
@@ -159,6 +188,8 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
     private var baseURL: URL?
     private var generation = 0
     private var rendering = false
+    /// Large documents render here, one at a time.
+    private let renderQueue = DispatchQueue(label: "com.dagurleo.markview.render", qos: .userInitiated)
     private var pendingAnchor: String?
     /// The drawings of the diagrams on show, so the same document shown again, as it is when
     /// the file changes, keeps them instead of flashing back to code while they are redrawn.
@@ -179,8 +210,6 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         textView.isSelectable = true
         textView.usesFindBar = true
         textView.isIncrementalSearchingEnabled = true
-        textView.backgroundColor = Theme.background
-        textView.linkTextAttributes = [.foregroundColor: Theme.link, .cursor: NSCursor.pointingHand]
         textView.autoresizingMask = [.width]
         textView.isVerticallyResizable = true
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -197,7 +226,14 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         allowsMagnification = true
         minMagnification = 0.5
         maxMagnification = 3
-        backgroundColor = Theme.background
+        applyTheme()
+    }
+
+    private func applyTheme() {
+        backgroundColor = theme.background
+        textView.backgroundColor = theme.background
+        textView.linkTextAttributes = [.foregroundColor: theme.link, .cursor: NSCursor.pointingHand]
+        textView.columnWidth = theme.columnWidth
     }
 
     @available(*, unavailable)
@@ -211,6 +247,7 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         self.baseURL = baseURL
         generation += 1
         let generation = generation
+        let theme = theme
         let large = markdown.utf8.count > 256 * 1024
 
         if !large || textView.string.isEmpty {
@@ -220,13 +257,16 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
                 let from = markdown.index(markdown.startIndex, offsetBy: 96 * 1024, limitedBy: markdown.endIndex) ?? markdown.endIndex
                 if let cut = markdown.range(of: "\n\n", range: from..<markdown.endIndex) { beginning = String(markdown[..<cut.lowerBound]) }
             }
-            let renderer = NativeRenderer(baseURL: baseURL)
+            let renderer = NativeRenderer(baseURL: baseURL, theme: theme)
             replaceText(with: renderer.render(beginning), from: renderer, keepingPlace: !large)
         }
         rendering = large
         guard large else { return }
-        DispatchQueue.global(qos: .userInitiated).async {
-            let renderer = NativeRenderer(baseURL: baseURL)
+        renderQueue.async {
+            // Each takes seconds and hundreds of megabytes, so one already overtaken, as by a
+            // file saved again or a setting changed again, is skipped.
+            guard DispatchQueue.main.sync(execute: { generation == self.generation }) else { return }
+            let renderer = NativeRenderer(baseURL: baseURL, theme: theme)
             let rendered = renderer.render(markdown)
             DispatchQueue.main.async {
                 guard generation == self.generation else { return }
@@ -247,7 +287,7 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         let style = NSMutableParagraphStyle()
         style.lineHeightMultiple = 1.25
         let text = NSAttributedString(string: markdown, attributes: [
-            .font: Theme.font(size: 13, mono: true), .foregroundColor: Theme.text, .paragraphStyle: style])
+            .font: theme.font(size: theme.scaled(13), mono: true), .foregroundColor: theme.text, .paragraphStyle: style])
         replaceText(with: text, from: nil, keepingPlace: false)
     }
 
@@ -273,7 +313,7 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         // misplaces boxed blocks after a resize, so ordinary documents do without it.
         layout.allowsNonContiguousLayout = rendered.length > 1_000_000
         layout.replaceTextStorage(NSTextStorage(attributedString: rendered))
-        textView.textChanged(hasDrawings: renderer?.hasDrawings ?? false)
+        textView.textChanged(hasDrawings: renderer?.hasDrawings ?? false, tables: renderer?.fittedTables ?? [])
         anchors = renderer?.anchors ?? [:]
         headings = renderer?.headings ?? []
         if keepingPlace, top > 0 {
@@ -286,7 +326,7 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
             contentView.scroll(to: .zero)
         }
         reflectScrolledClipView(contentView)
-        fetch(renderer?.remoteImages ?? [])
+        fetch(renderer?.remoteImages ?? [], limit: theme.columnWidth)
         draw(renderer?.diagrams ?? [])
     }
 
@@ -331,7 +371,7 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
             attachment.image = image
             attachment.bounds = NSRect(origin: .zero, size: image.size)
             let text = "\u{FFFC}\n"
-            let attributes: [NSAttributedString.Key: Any] = [.paragraphStyle: diagram.block, .font: Theme.font(size: Theme.bodySize),
+            let attributes: [NSAttributedString.Key: Any] = [.paragraphStyle: diagram.block, .font: diagram.theme.font(size: diagram.theme.bodySize),
                                                              .attachment: attachment, ColumnTextView.written: diagram.written]
             storage.replaceCharacters(in: range, with: NSAttributedString(string: text, attributes: attributes))
             // Heading links and the place in the document move with the text after the diagram.
@@ -343,12 +383,12 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         if top > 0 { scroll(toCharacter: top, margin: 0) }
     }
 
-    private func fetch(_ images: [(attachment: NSTextAttachment, url: URL, width: CGFloat?, height: CGFloat?)]) {
+    private func fetch(_ images: [(attachment: NSTextAttachment, url: URL, width: CGFloat?, height: CGFloat?)], limit: CGFloat) {
         for (attachment, url, width, height) in images {
             URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
                 guard let data, let picture = NSImage(data: data) else { return }
                 DispatchQueue.main.async {
-                    NativeRenderer.fit(picture, width: width, height: height)
+                    NativeRenderer.fit(picture, width: width, height: height, limit: limit)
                     attachment.image = picture
                     guard let self, let storage = self.textView.textStorage else { return }
                     self.textView.layoutManager?.invalidateLayout(

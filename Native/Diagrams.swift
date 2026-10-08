@@ -7,13 +7,15 @@ struct Diagram {
     let source: String
     /// How wide it may be drawn: a wider one is scaled down.
     let width: CGFloat
+    /// The page's colours and text size, which the drawing takes.
+    let theme: Theme
     /// The paragraph the drawing takes the place of the code with.
     let block: NSParagraphStyle
     /// The Markdown it was written as, which is what copying it gives.
     let written: String
 
     /// Diagrams with the same key are drawn the same.
-    var key: String { "\(width)|\(source)" }
+    var key: String { "\(theme.palette.id)|\(theme.bodySize)|\(width)|\(source)" }
 }
 
 /// Mermaid diagrams, drawn natively by MermaidKit (Vendor/MermaidKit) on a background
@@ -43,11 +45,11 @@ enum Diagrams {
     }
 
     private static func draw(_ diagram: Diagram) -> NSImage? {
-        guard let light = page(diagram.source, dark: false), let dark = page(diagram.source, dark: true) else { return nil }
+        guard let light = page(diagram, dark: false), let dark = page(diagram, dark: true) else { return nil }
         let size = light.page.getBoxRect(.mediaBox).size
         guard size.width > 0, size.height > 0 else { return nil }
-        // MermaidKit sets text at 12 points, small beside the page's 16; a quarter larger reads alike.
-        let scale = min(1.25, diagram.width / size.width)
+        // MermaidKit sets text at 12 points, small beside GitHub's 16; a quarter larger reads alike.
+        let scale = min(1.25 * diagram.theme.scale, diagram.width / size.width)
         let image = NSImage(size: NSSize(width: size.width * scale, height: size.height * scale), flipped: false) { destination in
             let isDark = NSAppearance.currentDrawing().bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             let page = (isDark ? dark : light).page
@@ -67,8 +69,8 @@ enum Diagrams {
 
     /// One version of a diagram as a single-page PDF. The document is kept with its page,
     /// which does not keep its document alive.
-    private static func page(_ source: String, dark: Bool) -> (document: CGPDFDocument, page: CGPDFPage)? {
-        guard let data = MermaidRenderer.pdfData(source: source, theme: theme(dark: dark)),
+    private static func page(_ diagram: Diagram, dark: Bool) -> (document: CGPDFDocument, page: CGPDFPage)? {
+        guard let data = MermaidRenderer.pdfData(source: diagram.source, theme: theme(diagram.theme, dark: dark)),
               let provider = CGDataProvider(data: data as CFData), let document = CGPDFDocument(provider),
               let page = document.page(at: 1) else { return nil }
         return (document, page)
@@ -76,14 +78,14 @@ enum Diagrams {
 
     /// MermaidKit's own theme takes the system accent colour; this one takes the page's
     /// text, link, border and background colours.
-    private static func theme(dark: Bool) -> DiagramTheme {
+    private static func theme(_ page: Theme, dark: Bool) -> DiagramTheme {
         var ink = NSColor.black, link = NSColor.blue, border = NSColor.gray, background = NSColor.white
         NSAppearance(named: dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
             func fixed(_ color: NSColor) -> NSColor { color.usingColorSpace(.sRGB) ?? color }
-            ink = fixed(Theme.text)
-            link = fixed(Theme.link)
-            border = fixed(Theme.border)
-            background = fixed(Theme.background)
+            ink = fixed(page.text)
+            link = fixed(page.link)
+            border = fixed(page.border)
+            background = fixed(page.background)
         }
         return DiagramTheme(ink: ink, secondaryTextColor: ink.withAlphaComponent(0.55), tertiaryTextColor: ink.withAlphaComponent(0.38),
                             canvas: background, accent: link, hairline: border, prefersDark: dark)

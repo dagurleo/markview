@@ -10,9 +10,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     /// stopped, so that a test run neither asks nor looks.
     private let updater = SPUStandardUpdaterController(
         startingUpdater: ProcessInfo.processInfo.environment["MARKVIEW_SNAPSHOT"] == nil, updaterDelegate: nil, userDriverDelegate: nil)
+    private lazy var settingsWindow = SettingsWindowController(updater: updater.updater)
+    /// What the open windows show, so that only a change of settings shows them again.
+    private var shownTheme = Settings.theme
+    private var shownAppearance: String?
+    private var pendingSettings: DispatchWorkItem?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = makeMainMenu()
+        shownAppearance = Settings.defaults.string(forKey: Settings.Key.appearance)
+        NSApp.appearance = Settings.appearance
+        NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged), name: UserDefaults.didChangeNotification, object: nil)
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
@@ -41,6 +49,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         }
     }
 
+    // MARK: Settings
+
+    @objc private func showSettings(_ sender: Any?) {
+        settingsWindow.showWindow(sender)
+    }
+
+    /// Any default changing, window frames included, lands here. A slider sends a change at every
+    /// step, so the windows are shown again only once the changes pause.
+    @objc private func defaultsChanged(_ notification: Notification) {
+        DispatchQueue.main.async { [self] in
+            pendingSettings?.cancel()
+            let work = DispatchWorkItem { [weak self] in self?.showSettingsChanges() }
+            pendingSettings = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+        }
+    }
+
+    private func showSettingsChanges() {
+        let appearance = Settings.defaults.string(forKey: Settings.Key.appearance)
+        if appearance != shownAppearance {
+            shownAppearance = appearance
+            NSApp.appearance = Settings.appearance
+        }
+        let theme = Settings.theme
+        guard theme != shownTheme else { return }
+        shownTheme = theme
+        for document in NSDocumentController.shared.documents {
+            for case let controller as ViewerWindowController in document.windowControllers { controller.show(theme) }
+        }
+    }
+
     // MARK: Menu
 
     private func makeMainMenu() -> NSMenu {
@@ -54,6 +93,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         let app = submenu("Markview")
         app.add("About Markview", #selector(NSApplication.orderFrontStandardAboutPanel(_:)))
         app.add("Check for Updates…", #selector(SPUStandardUpdaterController.checkForUpdates(_:))).target = updater
+        app.addItem(.separator())
+        app.add("Settings…", #selector(showSettings(_:)), key: ",").target = self
         app.addItem(.separator())
         app.add("Make Default Markdown Viewer", #selector(makeDefaultViewer(_:))).target = self
         app.addItem(.separator())
@@ -183,21 +224,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     // "Make Default Markdown Viewer" is ticked while Markview already is the default.
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(revealInFinder(_:)) || item.action == #selector(copyPath(_:)) { return currentFile != nil }
-        if item.action == #selector(makeDefaultViewer(_:)) {
-            let handler = Self.markdown.flatMap { NSWorkspace.shared.urlForApplication(toOpen: $0) }
-            let isDefault = handler.flatMap { Bundle(url: $0)?.bundleIdentifier } == Bundle.main.bundleIdentifier
-            item.state = isDefault ? .on : .off
-        }
+        if item.action == #selector(makeDefaultViewer(_:)) { item.state = Self.isDefaultViewer ? .on : .off }
         return true
     }
 
-    @objc private func makeDefaultViewer(_ sender: Any?) {
-        guard let markdown = Self.markdown else { return }
+    static var isDefaultViewer: Bool {
+        let handler = markdown.flatMap { NSWorkspace.shared.urlForApplication(toOpen: $0) }
+        return handler.flatMap { Bundle(url: $0)?.bundleIdentifier } == Bundle.main.bundleIdentifier
+    }
+
+    @objc private func makeDefaultViewer(_ sender: Any?) { Self.makeDefaultViewer() }
+
+    /// Calls back on the main thread once the switch is made or refused.
+    static func makeDefaultViewer(then done: @escaping () -> Void = {}) {
+        guard let markdown else { return }
         NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpen: markdown) { error in
             // macOS asks the user to confirm the switch itself; declining is not a failure.
             let underlying = (error as NSError?)?.userInfo[NSUnderlyingErrorKey] as? NSError
-            if underlying?.code == userCanceledErr { return }
+            if underlying?.code == userCanceledErr { return DispatchQueue.main.async(execute: done) }
             DispatchQueue.main.async {
+                defer { done() }
                 let alert = NSAlert()
                 alert.messageText = error == nil
                     ? "Markview now opens Markdown files by default."

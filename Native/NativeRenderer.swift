@@ -13,6 +13,8 @@ final class NativeRenderer {
     private(set) var diagrams: [Diagram] = []
     /// Whether any code block is a drawing, which the view fits to its column (see `drawing`).
     private(set) var hasDrawings = false
+    /// Tables given their natural width, which the view fits to its column (see `fitTables`).
+    private(set) var fittedTables: [FittedTable] = []
 
     private typealias Piece = (run: AttributedString.Runs.Run, text: String)
 
@@ -26,8 +28,8 @@ final class NativeRenderer {
         var marker: String?
         /// Identity of the outermost list the paragraph is in, so one list can be told from the next.
         var listID: Int?
-        var size = Theme.bodySize
-        var color = Theme.text
+        var size: CGFloat
+        var color: NSColor
     }
 
     /// Formatting switched on by HTML tags, in Markdown paragraphs and HTML blocks alike.
@@ -56,6 +58,7 @@ final class NativeRenderer {
     }
 
     private let baseURL: URL
+    private let theme: Theme
     private let output = NSMutableAttributedString()
     private var quoteBlocks: [Int: NSTextBlock] = [:]
     private var alertColors: [Int: NSColor] = [:]
@@ -85,18 +88,19 @@ final class NativeRenderer {
     private var equations = 0
     /// highlight.js, started for the first code block and dropped when rendering ends.
     /// Kept alive it would hold about 7 MB; this way it leaves about 1.
-    private lazy var engine: HighlightEngine? = HighlightEngine()
+    private lazy var engine: HighlightEngine? = HighlightEngine(theme: theme)
 
-    init(baseURL: URL) {
+    init(baseURL: URL, theme: Theme) {
         self.baseURL = baseURL
+        self.theme = theme
     }
 
     func render(_ markdown: String) -> NSAttributedString {
         var body = markdown
         if let match = markdown.range(of: #"^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)"#, options: .regularExpression) {
             let inner = markdown[match].split(separator: "\n", omittingEmptySubsequences: false).dropFirst().dropLast(2)
-            appendBoxed(inner.joined(separator: "\n"), font: Theme.font(size: 12.8, mono: true), color: Theme.muted,
-                        fill: nil, border: Theme.border)
+            appendBoxed(inner.joined(separator: "\n"), font: theme.font(size: theme.scaled(12.8), mono: true), color: theme.muted,
+                        fill: nil, border: theme.border)
             body.removeSubrange(match)
         }
         body = MarkdownExtensions.apply(body, baseURL: baseURL, formulas: &formulas)
@@ -104,7 +108,7 @@ final class NativeRenderer {
         let options = AttributedString.MarkdownParsingOptions(
             allowsExtendedAttributes: true, interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)
         guard let parsed = try? AttributedString(markdown: body, options: options, baseURL: baseURL) else {
-            return NSAttributedString(string: markdown, attributes: [.font: Theme.font(size: Theme.bodySize), .foregroundColor: Theme.text])
+            return NSAttributedString(string: markdown, attributes: [.font: theme.font(size: theme.bodySize), .foregroundColor: theme.text])
         }
 
         // Slicing text out of an AttributedString run by run is slow, so the text comes from an
@@ -217,7 +221,7 @@ final class NativeRenderer {
         case .codeBlock(let language):
             var code = written(pieces.map(\.text).joined())   // an indented block is not kept from the math pass
             if code.hasSuffix("\n") { code.removeLast() }
-            appendCode(code, language: language, inside: quotes, indent: CGFloat(listDepth) * 32)
+            appendCode(code, language: language, inside: quotes, indent: CGFloat(listDepth) * theme.scaled(32))
             return
         case .thematicBreak:
             rule(inside: quotes)
@@ -225,7 +229,7 @@ final class NativeRenderer {
         default: break
         }
 
-        var paragraph = Paragraph(quotes: quotes)
+        var paragraph = Paragraph(quotes: quotes, size: theme.bodySize, color: theme.text)
         if case .header(let level) = leaf.kind { paragraph.heading = min(max(level, 1), 6) }
         if let openTable, table != nil { paragraph = cell(of: openTable, row: isHeaderRow ? 0 : row, column: column) }
         if paragraph.cell == nil, let pending = htmlAlignments.last ?? nil { paragraph.alignment = pending }
@@ -241,7 +245,7 @@ final class NativeRenderer {
         if let quoteID = components.first(where: { if case .blockQuote = $0.kind { return true } else { return false } })?.identity,
            alertColors[quoteID] == nil, let first = pieces.first,
            let match = NativeRenderer.calloutMarker.firstMatch(in: first.text, range: NSRange(location: 0, length: (first.text as NSString).length)) {
-            let found = Theme.callout((first.text as NSString).substring(with: match.range(at: 1)))
+            let found = theme.callout((first.text as NSString).substring(with: match.range(at: 1)))
             alertColors[quoteID] = found.color
             alert = found.color
             quoteBlock(quoteID).setBorderColor(found.color, for: .minX)
@@ -252,14 +256,14 @@ final class NativeRenderer {
             var titleLine = Array(pieces[..<(lineEnd ?? pieces.count)])
             titleLine[0].text = (first.text as NSString).substring(from: match.range.length)
             pieces = lineEnd.map { Array(pieces[($0 + 1)...]) } ?? []
-            let custom = inline(titleLine, size: Theme.bodySize, bold: true, color: found.color)
+            let custom = inline(titleLine, size: theme.bodySize, bold: true, color: found.color)
             let title = custom.string.trimmingCharacters(in: .whitespaces).isEmpty
-                ? NSMutableAttributedString(string: found.title, attributes: [.font: Theme.font(size: Theme.bodySize, bold: true), .foregroundColor: found.color])
+                ? NSMutableAttributedString(string: found.title, attributes: [.font: theme.font(size: theme.bodySize, bold: true), .foregroundColor: found.color])
                 : custom
             separate(quotes)
             let style = NSMutableParagraphStyle()
             style.textBlocks = quotes
-            style.paragraphSpacing = 4
+            style.paragraphSpacing = theme.scaled(4)
             title.append(NSAttributedString(string: "\n"))
             title.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: title.length))
             output.append(title)
@@ -279,12 +283,12 @@ final class NativeRenderer {
     }
 
     private func textStyle(heading: Int?, header: Bool, quotes: [NSTextBlock], alert: NSColor?) -> (size: CGFloat, bold: Bool, color: NSColor) {
-        var size = Theme.bodySize, bold = header
-        var color = quotes.isEmpty || alert != nil ? Theme.text : Theme.muted
+        var size = theme.bodySize, bold = header
+        var color = quotes.isEmpty || alert != nil ? theme.text : theme.muted
         if let heading {
-            size = Theme.headingSizes[heading - 1]
+            size = theme.headingSizes[heading - 1]
             bold = true
-            if heading == 6 { color = Theme.muted }
+            if heading == 6 { color = theme.muted }
         }
         return (size, bold, color)
     }
@@ -292,8 +296,8 @@ final class NativeRenderer {
     /// Adds one paragraph to the output with everything its kind implies.
     private func emit(_ text: NSMutableAttributedString, _ paragraph: Paragraph) {
         let style = NSMutableParagraphStyle()
-        style.lineHeightMultiple = 1.3
-        style.paragraphSpacing = 16
+        style.lineHeightMultiple = theme.lineSpacing
+        style.paragraphSpacing = theme.scaled(16)
         var blocks = paragraph.quotes
         var prefix = ""
 
@@ -304,7 +308,7 @@ final class NativeRenderer {
             style.paragraphSpacingBefore = size * 0.9
             if level <= 2 {
                 let underline = NativeRenderer.fullWidthBlock()
-                underline.setBorderColor(Theme.border)
+                underline.setBorderColor(theme.border)
                 underline.setWidth(1, type: .absoluteValueType, for: .border, edge: .maxY)
                 underline.setWidth(size * 0.3, type: .absoluteValueType, for: .padding, edge: .maxY)
                 underline.setWidth(size * 0.6, type: .absoluteValueType, for: .margin, edge: .maxY)
@@ -323,16 +327,16 @@ final class NativeRenderer {
         // picture is a blank band, so a paragraph with one keeps its natural height.
         if tallestPicture(in: text) > paragraph.size * 2 { style.lineHeightMultiple = 1 }
         if paragraph.listDepth > 0 {
-            let indent = CGFloat(paragraph.listDepth) * 32
+            let indent = CGFloat(paragraph.listDepth) * theme.scaled(32)
             style.headIndent = indent
             style.firstLineHeadIndent = indent
-            style.paragraphSpacing = 4
+            style.paragraphSpacing = theme.scaled(4)
             if let marker = paragraph.marker {
                 prefix = marker
-                style.firstLineHeadIndent = indent - 24
+                style.firstLineHeadIndent = indent - theme.scaled(24)
                 style.tabStops = [NSTextTab(textAlignment: .left, location: indent)]
             } else {
-                style.paragraphSpacingBefore = 8   // a further paragraph inside an item
+                style.paragraphSpacingBefore = theme.scaled(8)   // a further paragraph inside an item
             }
         }
         separate(blocks)
@@ -350,16 +354,16 @@ final class NativeRenderer {
         if paragraph.listDepth == 0 || paragraph.listID != lastListID, let tail = listTail,
            let last = output.attribute(.paragraphStyle, at: tail.location, effectiveRange: nil) as? NSParagraphStyle {
             let spaced = last.mutableCopy() as! NSMutableParagraphStyle
-            spaced.paragraphSpacing = 16
+            spaced.paragraphSpacing = theme.scaled(16)
             output.addAttribute(.paragraphStyle, value: spaced, range: tail)
         }
         lastListID = paragraph.listID
 
         style.textBlocks = blocks
         if !prefix.isEmpty {
-            text.insert(NSAttributedString(string: prefix + "\t", attributes: [.font: Theme.font(size: paragraph.size), .foregroundColor: paragraph.color]), at: 0)
+            text.insert(NSAttributedString(string: prefix + "\t", attributes: [.font: theme.font(size: paragraph.size), .foregroundColor: paragraph.color]), at: 0)
         }
-        text.append(NSAttributedString(string: "\n", attributes: [.font: Theme.font(size: paragraph.size)]))
+        text.append(NSAttributedString(string: "\n", attributes: [.font: theme.font(size: paragraph.size)]))
         text.addAttribute(.paragraphStyle, value: shared(style), range: NSRange(location: 0, length: text.length))
         let start = output.length
         output.append(text)
@@ -386,7 +390,7 @@ final class NativeRenderer {
         if let box, let lastBox, box !== lastBox {
             let style = NSMutableParagraphStyle()
             style.maximumLineHeight = 1
-            output.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: style, .font: Theme.font(size: 1)]))
+            output.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: style, .font: theme.font(size: 1)]))
         }
         lastBox = box
     }
@@ -402,30 +406,31 @@ final class NativeRenderer {
 
     private func appendCode(_ code: String, language: String?, inside quotes: [NSTextBlock], indent: CGFloat = 0) {
         let kind = language?.lowercased()
-        let width = Theme.figureWidth - indent - CGFloat(quotes.count) * 20
-        if kind == "math", let math = Math.image(code, display: true, size: Theme.bodySize, width: width, equations: &equations) {
+        let width = theme.figureWidth - indent - CGFloat(quotes.count) * quoteInset
+        if kind == "math", let math = Math.image(code, display: true, size: theme.bodySize, width: width, color: theme.text, equations: &equations) {
             let attachment = FittingAttachment()
             attachment.image = math.image
             attachment.bounds = NSRect(origin: .zero, size: math.image.size)
             separate(quotes)
             output.append(NSAttributedString(string: "\u{FFFC}\n", attributes: [
                 .attachment: attachment, .paragraphStyle: NativeRenderer.figureBlock(inside: quotes, indent: indent),
-                .font: Theme.font(size: Theme.bodySize), ColumnTextView.written: "$$\n\(code)\n$$\n"]))
+                .font: theme.font(size: theme.bodySize), ColumnTextView.written: "$$\n\(code)\n$$\n"]))
             appendGap(inside: quotes)
             return
         }
         // Math that cannot be drawn shows as written.
         let drawing = kind != "mermaid" && code.unicodeScalars.contains { (0x2500...0x259F).contains($0.value) }
-        let range = appendBoxed(code, font: Theme.font(size: 14, mono: true), color: Theme.text, fill: Theme.subtle, border: nil,
-                                inside: quotes, indent: indent, wraps: !drawing)
-        if drawing { markDrawing(NSRange(location: range.location, length: range.length + 1), room: width - 32) }
+        let codeSize = theme.scaled(14)
+        let range = appendBoxed(code, font: drawing ? Theme.drawingFont(size: codeSize) : theme.font(size: codeSize, mono: true),
+                                color: theme.text, fill: theme.subtle, border: nil, inside: quotes, indent: indent, wraps: !drawing)
+        if drawing { markDrawing(NSRange(location: range.location, length: range.length + 1), size: codeSize, room: width - theme.scaled(32)) }
         guard kind == "mermaid" else {
             if let language, !language.isEmpty, kind != "math" { engine?.highlight(output, in: range, language: language) }
             return
         }
         // The code stands in for the diagram, with its line break, until the drawing takes its paragraph.
         output.addAttribute(Diagrams.placeholder, value: diagrams.count, range: NSRange(location: range.location, length: range.length + 1))
-        diagrams.append(Diagram(source: code, width: width, block: NativeRenderer.figureBlock(inside: quotes, indent: indent),
+        diagrams.append(Diagram(source: code, width: width, theme: theme, block: NativeRenderer.figureBlock(inside: quotes, indent: indent),
                                 written: "```mermaid\n\(code)\n```\n"))
     }
 
@@ -444,16 +449,18 @@ final class NativeRenderer {
     /// wrap; its text shrinks instead until the widest line fits, as a wide formula does.
     static let drawing = NSAttributedString.Key("MarkviewDrawing")
 
-    /// A drawing's widest line in columns, and how much narrower than the text container its lines are.
+    /// A drawing's widest line in columns, how much narrower than the text container its lines
+    /// are, and the size of code, which is the largest it is drawn.
     struct Drawing: Hashable {
         let columns: Int
         let margin: CGFloat
+        let size: CGFloat
     }
 
     /// Characters the monospaced font lacks come from other fonts, at other widths, which would
     /// knock the lines of a drawing out of line. Each is kerned to the columns a terminal gives it.
-    private func markDrawing(_ range: NSRange, room: CGFloat) {
-        let font = Theme.font(size: 14, mono: true)
+    private func markDrawing(_ range: NSRange, size: CGFloat, room: CGFloat) {
+        let font = Theme.drawingFont(size: size)
         let column = ("0" as NSString).size(withAttributes: [.font: font]).width
         var widths: [Character: CGFloat] = [:]
         var widest = 0, columns = 0, location = range.location
@@ -476,8 +483,8 @@ final class NativeRenderer {
         }
         guard max(widest, columns) > 0 else { return }
         hasDrawings = true
-        output.addAttribute(NativeRenderer.drawing, value: Drawing(columns: max(widest, columns), margin: Theme.columnWidth - room), range: range)
-        NativeRenderer.fitDrawings(in: output, width: Theme.columnWidth, within: range)
+        output.addAttribute(NativeRenderer.drawing, value: Drawing(columns: max(widest, columns), margin: theme.columnWidth - room, size: size), range: range)
+        NativeRenderer.fitDrawings(in: output, width: theme.columnWidth, within: range)
     }
 
     /// Whether a terminal gives a character two columns, as it does Chinese, Japanese and Korean
@@ -498,9 +505,9 @@ final class NativeRenderer {
         text.enumerateAttribute(drawing, in: range ?? NSRange(location: 0, length: text.length)) { value, range, _ in
             guard let drawing = value as? Drawing, let font = text.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return }
             let column = ("0" as NSString).size(withAttributes: [.font: font]).width / font.pointSize
-            let size = max(1, min(14, floor((width - drawing.margin) / (CGFloat(drawing.columns) * column) * 4) / 4))
+            let size = max(1, min(drawing.size, floor((width - drawing.margin) / (CGFloat(drawing.columns) * column) * 4) / 4))
             guard size != font.pointSize else { return }
-            text.addAttribute(.font, value: Theme.font(size: size, mono: true), range: range)
+            text.addAttribute(.font, value: Theme.drawingFont(size: size), range: range)
             // Characters from other fonts scale with it, and so do the kerns that align them.
             text.enumerateAttribute(.kern, in: range) { kern, part, _ in
                 if let kern = kern as? CGFloat { text.addAttribute(.kern, value: kern * size / font.pointSize, range: part) }
@@ -515,7 +522,7 @@ final class NativeRenderer {
                              inside quotes: [NSTextBlock] = [], indent: CGFloat = 0, wraps: Bool = true) -> NSRange {
         let box = NativeRenderer.fullWidthBlock()
         box.backgroundColor = fill
-        box.setWidth(16, type: .absoluteValueType, for: .padding)
+        box.setWidth(theme.scaled(16), type: .absoluteValueType, for: .padding)
         if indent > 0 { box.setWidth(indent, type: .absoluteValueType, for: .margin, edge: .minX) }
         if let border {
             box.setBorderColor(border)
@@ -543,32 +550,35 @@ final class NativeRenderer {
     private func appendGap(inside quotes: [NSTextBlock]) {
         let gap = NSMutableParagraphStyle()
         gap.textBlocks = quotes
-        gap.minimumLineHeight = 16
-        gap.maximumLineHeight = 16
-        output.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: gap, .font: Theme.font(size: 1)]))
+        gap.minimumLineHeight = theme.scaled(16)
+        gap.maximumLineHeight = theme.scaled(16)
+        output.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: gap, .font: theme.font(size: 1)]))
         lastBox = quotes.first
     }
 
     private func rule(inside quotes: [NSTextBlock]) {
         let rule = NativeRenderer.fullWidthBlock()
-        rule.setBorderColor(Theme.border)
+        rule.setBorderColor(theme.border)
         rule.setWidth(1, type: .absoluteValueType, for: .border, edge: .minY)
-        rule.setWidth(16, type: .absoluteValueType, for: .margin, edge: .minY)
-        rule.setWidth(16, type: .absoluteValueType, for: .margin, edge: .maxY)
+        rule.setWidth(theme.scaled(16), type: .absoluteValueType, for: .margin, edge: .minY)
+        rule.setWidth(theme.scaled(16), type: .absoluteValueType, for: .margin, edge: .maxY)
         let style = NSMutableParagraphStyle()
         style.textBlocks = quotes + [rule]
         style.maximumLineHeight = 1
         separate(style.textBlocks)
-        output.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: style, .font: Theme.font(size: 1)]))
+        output.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: style, .font: theme.font(size: 1)]))
     }
+
+    /// How far a quote moves its text in: its bar and the padding after it.
+    private var quoteInset: CGFloat { 4 + theme.scaled(16) }
 
     private func quoteBlock(_ identity: Int) -> NSTextBlock {
         if let block = quoteBlocks[identity] { return block }
         let block = NativeRenderer.fullWidthBlock()
-        block.setBorderColor(Theme.border, for: .minX)
+        block.setBorderColor(theme.border, for: .minX)
         block.setWidth(4, type: .absoluteValueType, for: .border, edge: .minX)
-        block.setWidth(16, type: .absoluteValueType, for: .padding, edge: .minX)
-        block.setWidth(16, type: .absoluteValueType, for: .margin, edge: .maxY)
+        block.setWidth(theme.scaled(16), type: .absoluteValueType, for: .padding, edge: .minX)
+        block.setWidth(theme.scaled(16), type: .absoluteValueType, for: .margin, edge: .maxY)
         quoteBlocks[identity] = block
         return block
     }
@@ -581,13 +591,13 @@ final class NativeRenderer {
         table.numberOfColumns = max(columns, 1)
         table.collapsesBorders = true
         table.layoutAlgorithm = .automaticLayoutAlgorithm
-        table.setWidth(16, type: .absoluteValueType, for: .margin, edge: .maxY)
+        table.setWidth(theme.scaled(16), type: .absoluteValueType, for: .margin, edge: .maxY)
         // Its cells cannot sit inside the quote's block, so the table wears the quote's bar itself.
         if !quotes.isEmpty {
-            table.setBorderColor(alert ?? Theme.border, for: .minX)
+            table.setBorderColor(alert ?? theme.border, for: .minX)
             table.setWidth(4, type: .absoluteValueType, for: .border, edge: .minX)
-            table.setWidth(16, type: .absoluteValueType, for: .padding, edge: .minX)
-            table.setWidth(CGFloat(quotes.count - 1) * 20, type: .absoluteValueType, for: .margin, edge: .minX)
+            table.setWidth(theme.scaled(16), type: .absoluteValueType, for: .padding, edge: .minX)
+            table.setWidth(CGFloat(quotes.count - 1) * quoteInset, type: .absoluteValueType, for: .margin, edge: .minX)
         }
         tables[identity] = table
         return table
@@ -595,18 +605,21 @@ final class NativeRenderer {
 
     private func cellBlock(_ table: NSTextTable, row: Int, column: Int, columnSpan: Int = 1, rowSpan: Int = 1, header: Bool) -> NSTextTableBlock {
         let cell = NSTextTableBlock(table: table, startingRow: row, rowSpan: rowSpan, startingColumn: column, columnSpan: columnSpan)
-        cell.setBorderColor(Theme.border)
+        cell.setBorderColor(theme.border)
         cell.setWidth(1, type: .absoluteValueType, for: .border)
-        cell.setWidth(6, type: .absoluteValueType, for: .padding)
-        cell.setWidth(13, type: .absoluteValueType, for: .padding, edge: .minX)
-        cell.setWidth(13, type: .absoluteValueType, for: .padding, edge: .maxX)
-        if header { cell.backgroundColor = Theme.subtle }
+        cell.setWidth(theme.scaled(6), type: .absoluteValueType, for: .padding)
+        cell.setWidth(theme.scaled(13), type: .absoluteValueType, for: .padding, edge: .minX)
+        cell.setWidth(theme.scaled(13), type: .absoluteValueType, for: .padding, edge: .maxX)
+        if header { cell.backgroundColor = theme.subtle }
         return cell
     }
 
+    /// The room a cell's padding and border take beside its text.
+    private var cellInsets: CGFloat { 2 * theme.scaled(13) + 1 }
+
     /// A paragraph that is a cell of a Markdown table; row 0 is the header row.
     private func cell(of table: OpenTable, row: Int, column: Int) -> Paragraph {
-        var paragraph = Paragraph(quotes: table.quotes)
+        var paragraph = Paragraph(quotes: table.quotes, size: theme.bodySize, color: theme.text)
         let header = row == 0
         paragraph.cell = cellBlock(textTable(table.id, columns: table.columns.count, inside: table.quotes, alert: table.alert),
                                    row: row, column: column, header: header)
@@ -677,20 +690,85 @@ final class NativeRenderer {
             for span in spans[id] ?? [] {
                 let covered = span.column..<min(span.column + span.count, widths.count)
                 guard !covered.isEmpty else { continue }
-                let room = covered.reduce(0) { $0 + widths[$1] } + CGFloat(covered.count - 1) * 27
+                let room = covered.reduce(0) { $0 + widths[$1] } + CGFloat(covered.count - 1) * cellInsets
                 if span.width > room { for column in covered { widths[column] += (span.width - room) / CGFloat(covered.count) } }
             }
-            let content = widths.reduce(0, +), padding = CGFloat(widths.count) * 27
+            let content = widths.reduce(0, +), padding = CGFloat(widths.count) * cellInsets
             let natural = (content + padding) * 1.05
             // In a quote the table has a bar and padding of its own, which its width must include.
             let insets = [NSTextBlock.Layer.padding, .border, .margin].reduce(0) { $0 + table.width(for: $1, edge: .minX) }
-            guard content > 0, natural + insets < Theme.columnWidth else { continue }
-            table.setContentWidth((natural + insets) / Theme.columnWidth * 100, type: .percentageValueType)
+            guard content > 0, natural + insets < theme.columnWidth else { continue }
+            fittedTables.append(FittedTable(table: table, width: natural + insets))
             let share = (natural - padding) / content
             for cell in cells[id] ?? [] where cell.columnSpan == 1 && cell.startingColumn < widths.count {
                 cell.setContentWidth(widths[cell.startingColumn] * share / natural * 100, type: .percentageValueType)
             }
         }
+        NativeRenderer.fitTables(fittedTables, width: theme.columnWidth)
+    }
+
+    /// A table narrower than the column, and its natural width. Its cells' widths are shares of
+    /// the table's, but the table's own is a share of the text container's, so a narrower
+    /// container, as in a small window or with a long line length, needs a larger share.
+    struct FittedTable {
+        let table: NSTextTable
+        let width: CGFloat
+    }
+
+    /// Gives each table its natural width in a text container this wide, or all of it if that is less.
+    static func fitTables(_ tables: [FittedTable], width: CGFloat) {
+        for fitted in tables { fitted.table.setContentWidth(min(100, fitted.width / width * 100), type: .percentageValueType) }
+    }
+
+    /// A copy of the text with tables of its own, fitted to a text container this wide. Tables
+    /// are objects the text only points to, and the view's change with the view's width.
+    static func copy(_ text: NSAttributedString, tables fitted: [FittedTable], fittedTo width: CGFloat) -> NSTextStorage {
+        let copy = NSTextStorage(attributedString: text)
+        var tables: [ObjectIdentifier: NSTextTable] = [:], cells: [ObjectIdentifier: NSTextTableBlock] = [:]
+        func table(_ old: NSTextTable) -> NSTextTable {
+            if let table = tables[ObjectIdentifier(old)] { return table }
+            let table = NSTextTable()
+            table.numberOfColumns = old.numberOfColumns
+            table.layoutAlgorithm = old.layoutAlgorithm
+            table.collapsesBorders = old.collapsesBorders
+            table.hidesEmptyCells = old.hidesEmptyCells
+            copyLook(of: old, to: table)
+            tables[ObjectIdentifier(old)] = table
+            return table
+        }
+        copy.beginEditing()
+        copy.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: copy.length)) { value, range, _ in
+            guard let style = value as? NSParagraphStyle, style.textBlocks.contains(where: { $0 is NSTextTableBlock }) else { return }
+            let mapped = style.mutableCopy() as! NSMutableParagraphStyle
+            mapped.textBlocks = style.textBlocks.map { block in
+                guard let old = block as? NSTextTableBlock else { return block }
+                if let cell = cells[ObjectIdentifier(old)] { return cell }
+                let cell = NSTextTableBlock(table: table(old.table), startingRow: old.startingRow, rowSpan: old.rowSpan,
+                                            startingColumn: old.startingColumn, columnSpan: old.columnSpan)
+                copyLook(of: old, to: cell)
+                cells[ObjectIdentifier(old)] = cell
+                return cell
+            }
+            copy.addAttribute(.paragraphStyle, value: mapped, range: range)
+        }
+        copy.endEditing()
+        fitTables(fitted.compactMap { old in tables[ObjectIdentifier(old.table)].map { FittedTable(table: $0, width: old.width) } }, width: width)
+        return copy
+    }
+
+    /// Everything a text block has to show: its edges, colours, sizes and alignment.
+    private static func copyLook(of old: NSTextBlock, to block: NSTextBlock) {
+        for edge in [NSRectEdge.minX, .minY, .maxX, .maxY] {
+            for layer in [NSTextBlock.Layer.padding, .border, .margin] {
+                block.setWidth(old.width(for: layer, edge: edge), type: old.widthValueType(for: layer, edge: edge), for: layer, edge: edge)
+            }
+            block.setBorderColor(old.borderColor(for: edge), for: edge)
+        }
+        for dimension in [NSTextBlock.Dimension.width, .minimumWidth, .maximumWidth, .height, .minimumHeight, .maximumHeight] {
+            block.setValue(old.value(for: dimension), type: old.valueType(for: dimension), for: dimension)
+        }
+        block.backgroundColor = old.backgroundColor
+        block.verticalAlignment = old.verticalAlignment
     }
 
     // MARK: HTML
@@ -720,7 +798,7 @@ final class NativeRenderer {
             while let last = text.string.last, last.isWhitespace { text.deleteCharacters(in: NSRange(location: text.length - 1, length: 1)) }
             guard text.length > 0 || marker != nil || keepingEmpty else { return }
             cell?.written = true
-            var paragraph = Paragraph(quotes: quotes)
+            var paragraph = Paragraph(quotes: quotes, size: theme.bodySize, color: theme.text)
             paragraph.heading = heading
             paragraph.alignment = cell?.alignment ?? htmlAlignments.last ?? nil
             paragraph.cell = cell?.block
@@ -732,7 +810,7 @@ final class NativeRenderer {
             paragraph.size = size
             paragraph.color = color
             if summary {
-                text.insert(NSAttributedString(string: "▸ ", attributes: [.font: Theme.font(size: size, bold: true), .foregroundColor: color]), at: 0)
+                text.insert(NSAttributedString(string: "▸ ", attributes: [.font: theme.font(size: size, bold: true), .foregroundColor: color]), at: 0)
             }
             emit(text, paragraph)
         }
@@ -873,7 +951,7 @@ final class NativeRenderer {
     /// A width or height attribute: a number of pixels, or a percentage of the column.
     private func dimension(_ value: String?) -> CGFloat? {
         guard let value, let number = Double(value.prefix { $0.isNumber || $0 == "." }), number > 0 else { return nil }
-        return value.contains("%") ? Theme.columnWidth * number / 100 : number
+        return value.contains("%") ? theme.columnWidth * number / 100 : number
     }
 
     // MARK: Inline
@@ -927,15 +1005,15 @@ final class NativeRenderer {
             return
         }
         var math = attributes
-        math[.foregroundColor] = Theme.muted
+        math[.foregroundColor] = theme.muted
         math[BoxedLayoutManager.box] = nil
-        let size = (attributes[.font] as? NSFont)?.pointSize ?? Theme.bodySize
+        let size = (attributes[.font] as? NSFont)?.pointSize ?? theme.bodySize
         for (number, part) in text.split(separator: MarkdownExtensions.formulaStart, omittingEmptySubsequences: false).enumerated() {
             var rest = part
             if number > 0, let end = part.firstIndex(of: MarkdownExtensions.formulaEnd), let index = Int(part[..<end]), index < formulas.count {
                 let formula = formulas[index]
                 if let drawn = Math.image(formula.display ? "\\displaystyle " + formula.tex : formula.tex, display: false, size: size,
-                                          width: Theme.figureWidth, equations: &equations) {
+                                          width: theme.figureWidth, color: theme.text, equations: &equations) {
                     let attachment = NSTextAttachment()
                     attachment.image = drawn.image
                     attachment.bounds = NSRect(x: 0, y: -drawn.depth, width: drawn.image.size.width, height: drawn.image.size.height)
@@ -977,12 +1055,12 @@ final class NativeRenderer {
         var fontSize = mono ? size * 0.875 : size
         if style.sub > 0 || style.sup > 0 { fontSize *= 0.75 }
         var result: [NSAttributedString.Key: Any] = [
-            .font: Theme.font(size: fontSize, bold: bold || style.bold > 0 || intents.contains(.stronglyEmphasized),
+            .font: theme.font(size: fontSize, bold: bold || style.bold > 0 || intents.contains(.stronglyEmphasized),
                               italic: style.italic > 0 || intents.contains(.emphasized), mono: mono),
             .foregroundColor: color,
         ]
-        if mono { result[BoxedLayoutManager.box] = Theme.subtle }
-        if style.mark > 0 { result[BoxedLayoutManager.box] = Theme.mark }
+        if mono { result[BoxedLayoutManager.box] = theme.subtle }
+        if style.mark > 0 { result[BoxedLayoutManager.box] = theme.mark }
         if style.strike > 0 || intents.contains(.strikethrough) { result[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
         if style.underline > 0 { result[.underlineStyle] = NSUnderlineStyle.single.rawValue }
         if style.sup > 0 { result[.baselineOffset] = size * 0.35 } else if style.sub > 0 { result[.baselineOffset] = -size * 0.15 }
@@ -991,15 +1069,16 @@ final class NativeRenderer {
     }
 
     private func image(_ url: URL, alt: String, width: CGFloat? = nil, height: CGFloat? = nil, link: URL? = nil) -> NSAttributedString {
-        let attachment = NSTextAttachment()
+        let attachment = FittingAttachment()
+        attachment.clearsPadding = false
         if url.isFileURL, let picture = NSImage(contentsOf: url) {
-            NativeRenderer.fit(picture, width: width, height: height)
+            NativeRenderer.fit(picture, width: width, height: height, limit: theme.columnWidth)
             attachment.image = picture
         } else if ["http", "https"].contains(url.scheme) {
             remoteImages.append((attachment, url, width, height))
             attachment.image = NSImage(size: NSSize(width: 1, height: 1))
         } else {
-            return NSAttributedString(string: alt, attributes: [.font: Theme.font(size: Theme.bodySize), .foregroundColor: Theme.muted])
+            return NSAttributedString(string: alt, attributes: [.font: theme.font(size: theme.bodySize), .foregroundColor: theme.muted])
         }
         let result = NSMutableAttributedString(attachment: attachment)
         if let link { result.addAttribute(.link, value: link, range: NSRange(location: 0, length: result.length)) }
@@ -1015,7 +1094,7 @@ final class NativeRenderer {
 
     /// One point per pixel, as a browser shows it, unless the document asked for a size,
     /// and never wider than the text column.
-    static func fit(_ picture: NSImage, width: CGFloat? = nil, height: CGFloat? = nil) {
+    static func fit(_ picture: NSImage, width: CGFloat? = nil, height: CGFloat? = nil, limit: CGFloat) {
         if let pixels = picture.representations.first, pixels.pixelsWide > 0 {
             picture.size = NSSize(width: pixels.pixelsWide, height: pixels.pixelsHigh)
         }
@@ -1026,7 +1105,6 @@ final class NativeRenderer {
         } else if let height {
             size = NSSize(width: size.width * height / size.height, height: height)
         }
-        let limit = Theme.columnWidth
         if size.width > limit { size = NSSize(width: limit, height: size.height * limit / size.width) }
         picture.size = size
     }

@@ -9,8 +9,8 @@ import SwaTexRender
 enum Math {
     /// KaTeX sets math at 1.21 times the size of the text around it.
     private static let scale: CGFloat = 1.21
-    /// Formulas are laid out in this colour where they take the page's, and drawn in the
-    /// page's text colour of the moment, light or dark. Colours a formula sets stay its own.
+    /// Formulas are laid out in this colour where they take the page's, and drawn in `color`,
+    /// the page's text colour, light or dark as the moment wants. Colours a formula sets stay its own.
     private static let ink = SwaTex.Color(r: 0.01, g: 0.02, b: 0.03, a: 1)
 
     /// A formula as a vector image that draws itself in the colours of wherever it is drawn,
@@ -18,7 +18,7 @@ enum Math {
     /// A wider one than `width` is scaled down to it. A display formula with an equation
     /// number takes the whole width, the formula centred in it and the number at its right.
     /// Equations are numbered on from `equations`, which is left at the last number used.
-    static func image(_ tex: String, display: Bool, size: CGFloat, width: CGFloat,
+    static func image(_ tex: String, display: Bool, size: CGFloat, width: CGFloat, color: NSColor,
                       equations: inout Int) -> (image: NSImage, depth: CGFloat)? {
         let em = size * scale
         guard let list = try? SwaTexEngine.displayList(for: tex, style: display ? .display : .text, color: ink,
@@ -34,7 +34,7 @@ enum Math {
             context.saveGState()
             context.translateBy(x: destination.minX, y: destination.minY)
             context.scaleBy(x: destination.width / metrics.width, y: destination.height / metrics.height)
-            DisplayListRenderer.draw(inked(list), in: context, options: options)
+            DisplayListRenderer.draw(inked(list, in: color), in: context, options: options)
             context.restoreGState()
             return true
         }
@@ -43,9 +43,9 @@ enum Math {
         return (image, display ? 0 : metrics.height - metrics.baseline)
     }
 
-    /// The formula in the text colour of the appearance it is being drawn in.
-    private static func inked(_ list: DisplayList) -> DisplayList {
-        guard let text = Theme.text.usingColorSpace(.sRGB) else { return list }
+    /// The formula in the colour for the appearance it is being drawn in.
+    private static func inked(_ list: DisplayList, in textColor: NSColor) -> DisplayList {
+        guard let text = textColor.usingColorSpace(.sRGB) else { return list }
         let color = SwaTex.Color(r: Float(text.redComponent), g: Float(text.greenComponent), b: Float(text.blueComponent),
                                  a: Float(text.alphaComponent))
         var inked = list

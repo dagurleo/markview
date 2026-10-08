@@ -5,8 +5,9 @@ import JavaScriptCore
 /// the app. No web view is involved.
 final class HighlightEngine {
     private let tokens: JSValue
+    private let theme: Theme
 
-    init?() {
+    init?(theme: Theme) {
         guard let url = Bundle.main.resourceURL?.appendingPathComponent("vendor/highlight.min.js"),
               let source = try? String(contentsOf: url, encoding: .utf8), let context = JSContext() else { return nil }
         context.evaluateScript(source)
@@ -27,6 +28,7 @@ final class HighlightEngine {
             """)
         guard let tokens = context.objectForKeyedSubscript("markviewTokens"), tokens.isObject else { return nil }
         self.tokens = tokens
+        self.theme = theme
     }
 
     func highlight(_ code: NSMutableAttributedString, in range: NSRange, language: String?) {
@@ -37,26 +39,26 @@ final class HighlightEngine {
         var location = range.location
         for index in stride(from: 0, to: pieces.count, by: 2) {
             let length = (pieces[index] as NSString).length
-            if let color = HighlightEngine.color(for: pieces[index + 1]) {
+            if let color = color(for: pieces[index + 1]) {
                 code.addAttribute(.foregroundColor, value: color, range: NSRange(location: location, length: length))
             }
             location += length
         }
     }
 
-    /// Token colours after GitHub's, from Theme.
-    private static func color(for scope: String) -> NSColor? {
+    /// Token colours from the theme, grouped as GitHub groups them.
+    private func color(for scope: String) -> NSColor? {
         let name = scope.split(separator: " ").first.map(String.init) ?? ""
         switch name {
-        case "hljs-keyword", "hljs-doctag", "hljs-template-tag", "hljs-template-variable", "hljs-type", "hljs-deletion": return Theme.keyword
-        case "hljs-variable": return scope.contains("language_") ? Theme.keyword : Theme.literal
-        case "hljs-title": return Theme.title
+        case "hljs-keyword", "hljs-doctag", "hljs-template-tag", "hljs-template-variable", "hljs-type", "hljs-deletion": return theme.keyword
+        case "hljs-variable": return scope.contains("language_") ? theme.keyword : theme.literal
+        case "hljs-title": return theme.title
         case "hljs-attr", "hljs-attribute", "hljs-literal", "hljs-meta", "hljs-number", "hljs-operator", "hljs-selector-attr",
-             "hljs-selector-class", "hljs-selector-id", "hljs-section": return Theme.literal
-        case "hljs-string", "hljs-regexp": return Theme.string
-        case "hljs-built_in", "hljs-symbol": return Theme.builtin
-        case "hljs-comment", "hljs-code", "hljs-formula": return Theme.comment
-        case "hljs-name", "hljs-quote", "hljs-selector-tag", "hljs-selector-pseudo", "hljs-addition": return Theme.tag
+             "hljs-selector-class", "hljs-selector-id", "hljs-section": return theme.literal
+        case "hljs-string", "hljs-regexp": return theme.string
+        case "hljs-built_in", "hljs-symbol": return theme.builtin
+        case "hljs-comment", "hljs-code", "hljs-formula": return theme.comment
+        case "hljs-name", "hljs-quote", "hljs-selector-tag", "hljs-selector-pseudo", "hljs-addition": return theme.tag
         default: return nil
         }
     }

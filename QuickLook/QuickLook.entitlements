@@ -16,5 +16,10 @@
 	<array>
 		<string>/</string>
 	</array>
+	<!-- The app's settings, so that previews look like its windows (Native/Settings.swift). -->
+	<key>com.apple.security.temporary-exception.shared-preference.read-only</key>
+	<array>
+		<string>com.dagurleo.markview</string>
+	</array>
 </dict>
 </plist>

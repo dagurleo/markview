@@ -17,7 +17,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         markdownView = MarkdownView(frame: frame)
         window.contentMinSize = NSSize(width: 360, height: 240)
         window.titlebarAppearsTransparent = true
-        window.backgroundColor = Theme.background
+        window.backgroundColor = markdownView.theme.background
         window.contentView = markdownView
         window.center()
         super.init(window: window)
@@ -39,6 +39,13 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
                 runSmokeTestHooks()
             }
         }
+    }
+
+    /// Shows the document again in another theme, keeping the place in it.
+    func show(_ theme: Theme) {
+        markdownView.theme = theme
+        window?.backgroundColor = theme.background
+        render()
     }
 
     func render() {
@@ -89,14 +96,16 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         operation.run()
     }
 
-    /// The page laid out at the width of the text column, in the light colours whatever
+    /// The page laid out at the width of the text column, in the theme's light colours whatever
     /// the window shows, so what prints does not depend on the window's size or appearance.
     private func pageForPrinting() -> NSTextView {
-        let storage = NSTextStorage(attributedString: markdownView.textView.attributedString())
-        if markdownView.textView.hasDrawings { NativeRenderer.fitDrawings(in: storage, width: Theme.columnWidth) }
+        let column = markdownView.theme.columnWidth
+        let text = markdownView.textView
+        let storage = NativeRenderer.copy(text.attributedString(), tables: text.tables, fittedTo: column)
+        if text.hasDrawings { NativeRenderer.fitDrawings(in: storage, width: column) }
         let layout = BoxedLayoutManager()
         storage.addLayoutManager(layout)
-        let width = Theme.columnWidth + 48
+        let width = column + 48
         let container = NSTextContainer(size: NSSize(width: width - 48, height: CGFloat.greatestFiniteMagnitude))
         layout.addTextContainer(container)
         let page = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 100), textContainer: container)
@@ -176,11 +185,14 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     /// MARKVIEW_SNAPSHOT_DELAY seconds (default 0.5). Optional extras, applied first:
     ///   MARKVIEW_CHROME_SNAPSHOT=<png path>  also capture the whole window
     ///   MARKVIEW_APPEARANCE=light|dark       override the system appearance
+    ///   MARKVIEW_WIDTH=<points>              make the page this wide, leaving the saved window size alone
     ///   MARKVIEW_FIND=<text>                 run a find
     ///   MARKVIEW_ANCHOR=<heading slug>       jump to a heading
     ///   MARKVIEW_LINK=<text>                 follow the first link whose target contains the text
     ///   MARKVIEW_SOURCE=1                    show the source instead of the page
     ///   MARKVIEW_PDF=<pdf path>              also export the page as a PDF
+    ///   MARKVIEW_SETTINGS=<png path>         also capture the Settings window
+    ///   MARKVIEW_SETTINGS_PANE=<n>           on its nth pane, counting from 0
     private func runSmokeTestHooks() {
         let environment = ProcessInfo.processInfo.environment
         guard let path = environment["MARKVIEW_SNAPSHOT"] else { return }
@@ -188,7 +200,18 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         if let appearance = environment["MARKVIEW_APPEARANCE"] {
             NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
         }
+        if let width = environment["MARKVIEW_WIDTH"].flatMap(Double.init), let window {
+            windowFrameAutosaveName = ""
+            window.setContentSize(NSSize(width: width, height: window.contentLayoutRect.height))
+        }
         if environment["MARKVIEW_SOURCE"] != nil { toggleSource(nil) }
+        var settings: NSWindow?
+        if environment["MARKVIEW_SETTINGS"] != nil {
+            NSApp.sendAction(Selector(("showSettings:")), to: nil, from: nil)
+            settings = NSApp.windows.first { $0.contentViewController is NSTabViewController }
+            let tabs = settings?.contentViewController as? NSTabViewController
+            tabs?.selectedTabViewItemIndex = environment["MARKVIEW_SETTINGS_PANE"].flatMap(Int.init) ?? 0
+        }
         // The find bar searches for whatever is on the shared find pasteboard, so the
         // previous contents are put back before quitting.
         let findBoard = NSPasteboard(name: .find)
@@ -218,6 +241,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
             }
             write(self.markdownView, to: path)
             write(self.window?.contentView?.superview, to: environment["MARKVIEW_CHROME_SNAPSHOT"])
+            write(settings?.contentView?.superview, to: environment["MARKVIEW_SETTINGS"])
             if let pdf = environment["MARKVIEW_PDF"] { self.writePDF(to: URL(fileURLWithPath: pdf)) }
             if environment["MARKVIEW_FIND"] != nil {
                 findBoard.clearContents()

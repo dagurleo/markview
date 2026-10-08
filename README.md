@@ -47,6 +47,11 @@ Markview menu checks at any time. Version 0.1.0 predates this and is updated by 
   links go to the browser, and any other local file is only revealed in Finder,
   so a document can never launch an app or run a script. Files dropped on a
   window follow the same rules.
+- Settings (⌘,) choose the look: twelve themes (GitHub, Solarized, One, Monokai, Dracula,
+  Nord, Tokyo Night, Catppuccin, Gruvbox, Ayu, Rosé Pine and Paper), each with a light and a dark side, light or dark whatever the
+  system shows, the text size, which the whole page follows, the text and code fonts,
+  the line length and the line spacing. Changes show at once in open windows, and
+  Quick Look previews follow them too. Printing and PDFs use the theme's light colours.
 - Quick Look preview through an app extension. Links in the preview go through a
   small XPC helper because the extension's sandbox cannot open them itself.
 - Find (⌘F), zoom (⌘+ ⌘- ⌘0), a Go menu listing the headings, View Source (⌘U),
@@ -125,8 +130,8 @@ Installed copies read the appcast from `releases/latest/download/appcast.xml`
 
 | Folder | Contents |
 |---|---|
-| `Sources/` | The app's shell: app delegate and menu, document, file watcher, link rules |
-| `Native/` | The renderer: `MarkdownView`, `NativeRenderer`, `HighlightEngine`, `Math`, `Diagrams`, `Theme`, the window controller and the Quick Look controller |
+| `Sources/` | The app's shell: app delegate and menu, document, file watcher, link rules, and the Settings window (SwiftUI) |
+| `Native/` | The renderer: `MarkdownView`, `NativeRenderer`, `HighlightEngine`, `Math`, `Diagrams`, `Theme` and its `Palette`s, `Settings`, the window controller and the Quick Look controller |
 | `QuickLook/` | The extension's plist and entitlements, and the `LinkOpener` XPC service |
 | `Resources/` | Icons, and the vendored highlight.js and emoji list. The Quick Look extension has its own copy of the `vendor` folder |
 | `Vendor/MermaidKit/` | [MermaidKit](https://github.com/2389-research/MermaidKit) 2.2.0 (85fdc08), which draws diagrams: its `MermaidLayout` and `MermaidRender` sources as released, less `MermaidView.swift`, which needs SwiftUI. To update, copy both folders from a new release and drop that file again |
@@ -148,9 +153,14 @@ renders the page to a PNG, prints the open documents and quits after
 captures the whole window, `MARKVIEW_APPEARANCE=light|dark` overrides the
 appearance, `MARKVIEW_FIND=<text>` runs a find, `MARKVIEW_ANCHOR=<slug>` jumps to a
 heading, `MARKVIEW_LINK=<text>` follows the first link containing the text,
-`MARKVIEW_SOURCE=1` shows the source instead of the page and `MARKVIEW_PDF=<path>`
-also exports the page as a PDF.
-`-pageZoom 1.5` after the file argument sets the zoom for that launch. The Quick
+`MARKVIEW_SOURCE=1` shows the source instead of the page, `MARKVIEW_PDF=<path>`
+also exports the page as a PDF, `MARKVIEW_WIDTH=<points>` narrows the window without
+saving its size, and `MARKVIEW_SETTINGS=<path>` captures the Settings window, on the
+pane `MARKVIEW_SETTINGS_PANE` counts to from 0.
+`-pageZoom 1.5` after the file argument sets the zoom for that launch, and settings
+can be given the same way: `-theme solarized` (`github`, `solarized`, `one`, `monokai`,
+`dracula`, `nord`, `tokyo-night`, `catppuccin`, `gruvbox`, `ayu`, `rose-pine`, `paper`), `-appearance dark`, `-textSize 20`, `-textFont Georgia`,
+`-codeFont Menlo`, `-lineLength 920` and `-lineSpacing 1.5`. The Quick
 Look extension can be tried with `qlmanage -p file.md` once the app is installed.
 
 ## Licence
@@ -160,5 +170,11 @@ Markview is under the MIT licence; see [LICENSE](LICENSE). It is built with
 Licence 1.1), [MermaidKit](https://github.com/2389-research/MermaidKit) (MIT),
 [highlight.js](https://highlightjs.org) (BSD 3-Clause), the shortcode table of
 [gemoji](https://github.com/github/gemoji) (MIT) and [Sparkle](https://sparkle-project.org)
-(MIT, and the BSD and zlib-style licences of code it includes). Their licences are next to them in `Vendor/`,
+(MIT, and the BSD and zlib-style licences of code it includes). Its themes take their
+colours from [Solarized](https://ethanschoonover.com/solarized/), Atom's
+[One](https://github.com/atom/atom/tree/master/packages/one-dark-syntax),
+[Monokai](https://monokai.pro), [Dracula](https://draculatheme.com),
+[Nord](https://www.nordtheme.com), [Tokyo Night](https://github.com/enkia/tokyo-night-vscode-theme),
+[Catppuccin](https://catppuccin.com), [Gruvbox](https://github.com/morhetz/gruvbox),
+[Ayu](https://github.com/ayu-theme/ayu-colors) and [Rosé Pine](https://rosepinetheme.com). Their licences are next to them in `Vendor/`,
 `Resources/vendor/` and Sparkle's download, and the app's About window gives them all in full.

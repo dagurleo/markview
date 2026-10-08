@@ -77,7 +77,7 @@ cp -R Resources/. "$APP/Contents/Resources/"
 cp -R Vendor/SwaTex/SwaTexRender/Resources/Fonts "$APP/Contents/Resources/"
 # The About window credits what Markview is built with, and gives each licence in full.
 {
-  echo "Markview is built with SwaTex, which draws math in KaTeX's fonts; MermaidKit, which draws diagrams; highlight.js, which colours code; gemoji's emoji shortcodes; and Sparkle, which keeps it up to date. Their licences and Markview's follow."
+  echo "Markview is built with SwaTex, which draws math in KaTeX's fonts; MermaidKit, which draws diagrams; highlight.js, which colours code; gemoji's emoji shortcodes; and Sparkle, which keeps it up to date. Its themes take their colours from Solarized, One, Monokai, Dracula, Nord, Tokyo Night, Catppuccin, Gruvbox, Ayu and Rosé Pine. Their licences and Markview's follow."
   for notice in "Markview|LICENSE" "SwaTex|Vendor/SwaTex/LICENSE" "KaTeX's fonts|Vendor/SwaTex/SwaTexRender/Resources/Fonts/OFL.txt" \
                 "MermaidKit|Vendor/MermaidKit/LICENSE" "highlight.js|Resources/vendor/highlight.js-LICENSE.txt" \
                 "gemoji|Resources/vendor/gemoji-LICENSE.txt" "Sparkle|$SPARKLE/LICENSE"; do

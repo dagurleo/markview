@@ -27,6 +27,9 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
     func preparePreviewOfFile(at url: URL, completionHandler handler: @escaping (Error?) -> Void) {
         do {
+            // Settings read afresh for each preview: the extension outlives a change made in the app.
+            markdownView.theme = Settings.theme
+            markdownView.appearance = Settings.appearance
             markdownView.show(String(decoding: try Data(contentsOf: url), as: UTF8.self), baseURL: url)
             handler(nil)
         } catch {
