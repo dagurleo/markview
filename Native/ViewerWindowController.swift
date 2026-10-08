@@ -1,4 +1,5 @@
 import Cocoa
+import Quartz
 import UniformTypeIdentifiers
 
 final class ViewerWindowController: NSWindowController, DocumentOutline, DocumentActions {
@@ -20,6 +21,8 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     /// Where the document was last read, gone back to once the window is on screen: until
     /// then its lines have not settled where they will be.
     private var placeToRestore: Int?
+    /// The picture shown full size in the Quick Look panel, and where it sits on screen.
+    private var preview: (file: URL, frame: NSRect)?
 
     var headings: [Heading] { markdownView.headings }
 
@@ -63,6 +66,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         let zoom = UserDefaults.standard.double(forKey: "pageZoom")
         markdownView.magnification = zoom > 0 ? zoom : 1
         markdownView.open = { [weak self] url in self?.open(url) }
+        markdownView.onPreview = { [weak self] file, frame in self?.showPreview(of: file, from: frame) }
         markdownView.onScroll = { [weak self] in
             self?.scrolled()
             self?.markCurrentHeading()
@@ -173,6 +177,30 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         } else {
             markdownView.show(document.markdown, baseURL: file)
         }
+    }
+
+    // MARK: Pictures full size
+
+    private func showPreview(of file: URL, from frame: NSRect) {
+        preview = (file, frame)
+        markdownView.textView.passesPreviewPanel = true
+        guard let panel = QLPreviewPanel.shared() else { return }
+        if panel.isVisible { panel.reloadData() } else { panel.makeKeyAndOrderFront(nil) }
+    }
+
+    // The window's controller is in the responder chain, so the panel asks it what to show.
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { preview != nil }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = self
+        panel.delegate = self
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = nil
+        panel.delegate = nil
+        preview = nil
+        markdownView.textView.passesPreviewPanel = false
     }
 
     // MARK: Place
@@ -406,4 +434,13 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
             NSApp.terminate(nil)
         }
     }
+}
+
+extension ViewerWindowController: QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { preview == nil ? 0 : 1 }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! { preview?.file as NSURL? }
+
+    // The panel zooms out of the picture on the page, and back into it.
+    func previewPanel(_ panel: QLPreviewPanel!, sourceFrameOnScreenFor item: (any QLPreviewItem)!) -> NSRect { preview?.frame ?? .zero }
 }

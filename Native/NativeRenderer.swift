@@ -1174,11 +1174,14 @@ final class NativeRenderer {
             fitting.clearsPadding = false
             guard let picture = picture(url, width: width, height: height, place: { fitting.image = $0 }) else { return altText(alt) }
             fitting.image = picture
+            fitting.source = url
             attachment = fitting
         } else {
             let modal = AppearanceAttachment()
             modal.light = light.flatMap { picture($0, width: width, height: height) { [weak modal] in modal?.light = $0 } }
             modal.dark = dark.flatMap { picture($0, width: width, height: height) { [weak modal] in modal?.dark = $0 } }
+            modal.lightSource = light
+            modal.darkSource = dark
             guard modal.light != nil || modal.dark != nil else { return altText(alt) }
             hasAppearanceImages = true
             attachment = modal

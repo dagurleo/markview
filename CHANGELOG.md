@@ -1,5 +1,10 @@
 # Changes
 
+## Unreleased (next)
+
+- Clicking a picture shows it full size in a Quick Look panel, and clicking a Mermaid
+  diagram shows it as a PDF that stays sharp however far it is zoomed.
+
 ## Unreleased
 
 - An outline of the document's headings beside the page: View > Show Outline (⌃⌘S). It

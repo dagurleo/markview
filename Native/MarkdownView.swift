@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 
 /// The text of a document: a centred column of at most `columnWidth` that
 /// also accepts files dropped on it.
@@ -105,6 +106,41 @@ final class ColumnTextView: NSTextView {
 
     /// Called with the link under the pointer, or nil once it is off links.
     var onHoverLink: (URL?) -> Void = { _ in }
+    /// Whether the picture at a character opens full size when clicked, and what opens it, with
+    /// where the picture is in the view.
+    var isPreviewable: (Int) -> Bool = { _ in false }
+    var onPictureClick: (Int, NSRect) -> Void = { _, _ in }
+    private var pointerOverPicture = false
+    /// A text view takes the Quick Look panel for its own links; while a picture is shown full
+    /// size, it leaves the panel to whoever shows the picture.
+    var passesPreviewPanel = false
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        passesPreviewPanel ? false : super.acceptsPreviewPanelControl(panel)
+    }
+
+    /// The picture under a point, if the point is on the picture itself, and its frame.
+    private func picture(at point: NSPoint) -> (index: Int, frame: NSRect)? {
+        guard let layout = layoutManager, let container = textContainer, let storage = textStorage, storage.length > 0 else { return nil }
+        let inContainer = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        let glyph = layout.glyphIndex(for: inContainer, in: container)
+        let index = layout.characterIndexForGlyph(at: glyph)
+        guard index < storage.length, storage.attribute(.attachment, at: index, effectiveRange: nil) != nil else { return nil }
+        var frame = layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container)
+        guard frame.contains(inContainer) else { return nil }
+        frame.origin.x += textContainerOrigin.x
+        frame.origin.y += textContainerOrigin.y
+        return (index, frame)
+    }
+
+    // A plain click on a picture that can be shown full size shows it; anything else selects as usual.
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 1, event.modifierFlags.intersection([.shift, .command, .option, .control]).isEmpty,
+           let (index, frame) = picture(at: convert(event.locationInWindow, from: nil)), isPreviewable(index) {
+            return onPictureClick(index, frame)
+        }
+        super.mouseDown(with: event)
+    }
     /// The button that copies the code block under the pointer.
     let copyButton = CopyButton()
     private var hoveredLink: URL?
@@ -123,7 +159,7 @@ final class ColumnTextView: NSTextView {
         let point = convert(event.locationInWindow, from: nil)
         pointerMoved(to: point)
         // The text view sets its own cursor as the pointer moves, over its subviews too.
-        if !copyButton.isHidden, copyButton.frame.contains(point) { NSCursor.pointingHand.set() }
+        if pointerOverPicture || (!copyButton.isHidden && copyButton.frame.contains(point)) { NSCursor.pointingHand.set() }
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -149,6 +185,7 @@ final class ColumnTextView: NSTextView {
         let overGlyph = layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).contains(inContainer)
         let link = overGlyph ? storage.attribute(.link, at: index, effectiveRange: nil) : nil
         hover(link as? URL ?? (link as? String).flatMap(URL.init(string:)))
+        pointerOverPicture = overGlyph && link == nil && isPreviewable(index)
 
         // A code block's button shows while the pointer is anywhere in its box.
         var range = NSRange()
@@ -291,6 +328,10 @@ final class FittingAttachment: NSTextAttachment {
     /// Whether it keeps clear of the text container's padding, as a figure does. A picture
     /// has always reached into it, and only shrinks once it is wider than the line itself.
     var clearsPadding = true
+    /// Where a picture came from, a file or the web, and the diagram a drawing is of, so that a
+    /// click can show either full size (see MarkdownView.previewFile).
+    var source: URL?
+    var diagram: Diagram?
 
     override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: NSRect,
                                    glyphPosition position: NSPoint, characterIndex charIndex: Int) -> NSRect {
@@ -311,6 +352,8 @@ final class FittingAttachment: NSTextAttachment {
 final class AppearanceAttachment: NSTextAttachment {
     var light: NSImage? { didSet { redraw() } }
     var dark: NSImage? { didSet { redraw() } }
+    /// Where each picture came from.
+    var lightSource: URL?, darkSource: URL?
 
     private func picture(for appearance: NSAppearance?) -> NSImage? {
         appearance?.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
@@ -372,6 +415,17 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
     let textView: ColumnTextView
     /// Called with a clicked link that leads out of the document, or a file dropped on it.
     var open: (URL) -> Void = { _ in }
+    /// Called with a file to show full size, and where on screen its picture is, when a picture
+    /// or diagram is clicked. Nil where there is nothing to show it in, as in Quick Look.
+    var onPreview: ((URL, NSRect) -> Void)? {
+        didSet {
+            textView.isPreviewable = { [weak self] index in self?.onPreview != nil && self?.previewSource(at: index) != nil }
+            textView.onPictureClick = { [weak self] index, frame in
+                guard let self, let onPreview, let file = previewFile(at: index) else { return }
+                onPreview(file, textView.window?.convertToScreen(textView.convert(frame, to: nil)) ?? .zero)
+            }
+        }
+    }
     /// The colours, fonts and sizes documents are shown in. The background and the column
     /// change at once; the text keeps its look until the document is shown again.
     var theme = Settings.theme {
@@ -493,6 +547,57 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         guard let storage = textView.textStorage, index < storage.length else { return nil }
         let start = (storage.string as NSString).paragraphRange(for: NSRange(location: index, length: 0)).location
         return headings.first { anchors[$0.anchor] == start }
+    }
+
+    // MARK: Pictures full size
+
+    private enum PreviewSource {
+        case file(URL), web(URL), diagram(Diagram)
+    }
+
+    /// What the picture or diagram at a character can be shown full size from. A picture that is
+    /// a link is the link's to follow; a formula has nothing to show.
+    private func previewSource(at index: Int) -> PreviewSource? {
+        guard let storage = textView.textStorage, index < storage.length,
+              storage.attribute(.link, at: index, effectiveRange: nil) == nil else { return nil }
+        var source: URL?
+        switch storage.attribute(.attachment, at: index, effectiveRange: nil) {
+        case let fitting as FittingAttachment:
+            if let diagram = fitting.diagram { return .diagram(diagram) }
+            source = fitting.source
+        case let modal as AppearanceAttachment:
+            source = isDark ? modal.darkSource : modal.lightSource
+        default:
+            return nil
+        }
+        guard let source else { return nil }
+        if source.isFileURL { return .file(URL(fileURLWithPath: source.path)) }
+        return fetched[source] == nil ? nil : .web(source)
+    }
+
+    private var isDark: Bool { effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua }
+
+    /// A file for Quick Look: the picture's own, or one written for it, as the picture was fetched
+    /// or the diagram drawn, in the window's colours.
+    private func previewFile(at index: Int) -> URL? {
+        switch previewSource(at: index) {
+        case .file(let file): return file
+        case .web(let address):
+            guard let tiff = fetched[address]?.tiffRepresentation,
+                  let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return nil }
+            let name = address.deletingPathExtension().lastPathComponent
+            return writePreview(png, named: (name.isEmpty || name == "/" ? "Image" : name) + ".png")
+        case .diagram(let diagram):
+            return Diagrams.pdf(diagram, dark: isDark).flatMap { writePreview($0, named: "Diagram.pdf") }
+        case nil: return nil
+        }
+    }
+
+    private func writePreview(_ data: Data, named name: String) -> URL? {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Markview Previews", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent(name)
+        return (try? data.write(to: file)) == nil ? nil : file
     }
 
     // A heading's context menu can copy a link to it, as the document's own links write one.
@@ -659,6 +764,7 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
             let image = drawings[index]!, diagram = diagrams[index]
             let attachment = FittingAttachment()
             attachment.image = image
+            attachment.diagram = diagram
             attachment.bounds = NSRect(origin: .zero, size: image.size)
             let text = "\u{FFFC}\n"
             let attributes: [NSAttributedString.Key: Any] = [.paragraphStyle: diagram.block, .font: diagram.theme.font(size: diagram.theme.bodySize),

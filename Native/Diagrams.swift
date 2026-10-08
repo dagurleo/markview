@@ -69,6 +69,11 @@ enum Diagrams {
 
     /// One version of a diagram as a single-page PDF. The document is kept with its page,
     /// which does not keep its document alive.
+    /// A diagram as a PDF, light or dark, to show full size.
+    static func pdf(_ diagram: Diagram, dark: Bool) -> Data? {
+        MermaidRenderer.pdfData(source: diagram.source, theme: theme(diagram.theme, dark: dark))
+    }
+
     private static func page(_ diagram: Diagram, dark: Bool) -> (document: CGPDFDocument, page: CGPDFPage)? {
         guard let data = MermaidRenderer.pdfData(source: diagram.source, theme: theme(diagram.theme, dark: dark)),
               let provider = CGDataProvider(data: data as CFData), let document = CGPDFDocument(provider),
