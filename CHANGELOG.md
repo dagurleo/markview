@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 0.2.0
 
 - Settings (⌘,) in the Markview menu. Choose one of twelve themes (GitHub, Solarized,
   One, Monokai, Dracula, Nord, Tokyo Night, Catppuccin, Gruvbox, Ayu, Rosé Pine or Paper,
