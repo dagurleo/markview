@@ -23,6 +23,17 @@ final class NativeRenderer {
     private(set) var hasDrawings = false
     /// Tables given their natural width, which the view fits to its column (see `fitTables`).
     private(set) var fittedTables: [FittedTable] = []
+    /// Where a block of the output came from in the Markdown: the character it starts at, and the
+    /// line of the Markdown, counting from 0, that it starts on.
+    struct SourceLine {
+        var location: Int
+        let line: Int
+    }
+    /// The blocks' source lines in order, when asked for (see `tracksSource`), so that an editor
+    /// and the page can be kept at the same place.
+    private(set) var sourceLines: [SourceLine] = []
+    /// How many lines the Markdown has.
+    private(set) var sourceLineCount = 0
 
     private typealias Piece = (run: AttributedString.Runs.Run, text: String)
 
@@ -78,6 +89,9 @@ final class NativeRenderer {
 
     private let baseURL: URL
     private let theme: Theme
+    /// Whether to note which line of the Markdown each block came from. Only while an editor shows
+    /// the Markdown: the parser takes about a tenth longer.
+    private let tracksSource: Bool
     private let output = NSMutableAttributedString()
     private var quoteBlocks: [Int: NSTextBlock] = [:]
     private var alertColors: [Int: NSColor] = [:]
@@ -109,17 +123,22 @@ final class NativeRenderer {
     /// Kept alive it would hold about 7 MB; this way it leaves about 1.
     private lazy var engine: HighlightEngine? = HighlightEngine(theme: theme)
 
-    init(baseURL: URL, theme: Theme) {
+    init(baseURL: URL, theme: Theme, tracksSource: Bool = false) {
         self.baseURL = baseURL
         self.theme = theme
+        self.tracksSource = tracksSource
     }
 
     func render(_ markdown: String) -> NSAttributedString {
         var body = markdown
+        // How many lines front matter took, and how many took its place.
+        var frontMatter = (written: 0, rewritten: 0)
         if let match = markdown.range(of: #"^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)"#, options: .regularExpression) {
             let inner = markdown[match].split(separator: "\n", omittingEmptySubsequences: false).dropFirst().dropLast(2)
+            frontMatter.written = markdown[match].filter { $0 == "\n" }.count
             if let table = NativeRenderer.frontMatterTable(inner.map { String($0.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))) }) {
                 body.replaceSubrange(match, with: table + "\n\n")
+                frontMatter.rewritten = (table + "\n\n").filter { $0 == "\n" }.count
             } else {
                 appendBoxed(inner.joined(separator: "\n"), font: theme.font(size: theme.scaled(12.8), mono: true), color: theme.muted,
                             fill: nil, border: theme.border)
@@ -128,8 +147,24 @@ final class NativeRenderer {
         }
         body = MarkdownExtensions.apply(body, baseURL: baseURL, formulas: &formulas)
         body = linkedImagesAsHTML(body)
-        let options = AttributedString.MarkdownParsingOptions(
+        var options = AttributedString.MarkdownParsingOptions(
             allowsExtendedAttributes: true, interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)
+        // The parser counts the lines of the text it is given, which the rewrites above shift.
+        var sourceLine: (Int) -> Int = { $0 }
+        if tracksSource {
+            options.appliesSourcePositionAttributes = true
+            let original = markdown.split(separator: "\n", omittingEmptySubsequences: false)
+            let rewritten = body.split(separator: "\n", omittingEmptySubsequences: false)
+            sourceLineCount = original.count
+            // Front matter is known exactly; the lines after it are matched up.
+            let map = NativeRenderer.lineMap(from: original.dropFirst(frontMatter.written), to: rewritten.dropFirst(frontMatter.rewritten))
+            sourceLine = { line in
+                guard line >= frontMatter.rewritten else { return 0 }
+                let after = line - frontMatter.rewritten
+                return frontMatter.written + (map.map { $0[min(after, $0.count - 1)] } ?? after)
+            }
+            sourceLines = [SourceLine(location: 0, line: 0)]
+        }
         guard let parsed = try? AttributedString(markdown: body, options: options, baseURL: baseURL) else {
             return NSAttributedString(string: markdown, attributes: [.font: theme.font(size: theme.bodySize), .foregroundColor: theme.text])
         }
@@ -148,21 +183,79 @@ final class NativeRenderer {
         var block: [Piece] = []
         var blockID: Int?
         var htmlBlocks = 0
+        func flush() {
+            let start = output.length
+            append(block)
+            guard tracksSource, let position = block[0].run.markdownSourcePosition else { return }
+            // In order, though a block the rewrites moved, such as a footnote, may say otherwise.
+            let line = max(sourceLine(position.startLine - 1), sourceLines.last?.line ?? 0)
+            if start == sourceLines.last?.location { sourceLines.removeLast() }
+            sourceLines.append(SourceLine(location: start, line: line))
+        }
         for (index, run) in runs.enumerated() {
             let id: Int
             if let leaf = run.presentationIntent?.components.first { id = leaf.identity } else { htmlBlocks += 1; id = -htmlBlocks }
             if id != blockID, !block.isEmpty {
-                append(block)
+                flush()
                 block.removeAll(keepingCapacity: true)
             }
             blockID = id
             block.append((run, text(index)))
         }
-        if !block.isEmpty { append(block) }
+        if !block.isEmpty { flush() }
         finishTable()
         fitTables()
         engine = nil   // the JavaScript engine only lives for one render
         return output
+    }
+
+    /// For each line of the rewritten text the parser reads, the line of the Markdown it came from,
+    /// or nil when the two have the same lines. Most rewrites keep to their line; front matter as a
+    /// table, `$$` blocks and footnotes moved to the end add or take away lines. Lines are matched
+    /// in order, looking a little ahead on either side for one that was added or taken away.
+    static func lineMap(from original: ArraySlice<Substring>, to rewritten: ArraySlice<Substring>) -> [Int]? {
+        let original = Array(original), rewritten = Array(rewritten)
+        if original.count == rewritten.count { return nil }
+        guard !original.isEmpty else { return nil }
+        var map: [Int] = []
+        map.reserveCapacity(rewritten.count)
+        var i = 0, j = 0
+        let window = 64
+        while j < rewritten.count {
+            guard i < original.count else {
+                map.append(original.count - 1)   // what the rewrites added at the end, as the notes
+                j += 1
+                continue
+            }
+            if original[i] == rewritten[j] {
+                map.append(i)
+                i += 1
+                j += 1
+                continue
+            }
+            // Lines taken away: the rewritten line comes a little further on in the Markdown. Lines
+            // added: the Markdown's line comes a little further on in the rewritten text. A match
+            // counts if the line after it matches too, as a rule or a blank line alone often would.
+            func same(_ a: Int, _ b: Int) -> Bool {
+                guard original[a] == rewritten[b] else { return false }
+                if a + 1 == original.count || b + 1 == rewritten.count { return a + 1 == original.count && b + 1 == rewritten.count }
+                return original[a + 1] == rewritten[b + 1]
+            }
+            let skipped = (i + 1..<min(original.count, i + window)).first { same($0, j) }
+            let added = (j + 1..<min(rewritten.count, j + window)).first { same(i, $0) }
+            if let skip = skipped, added.map({ skip - i <= $0 - j }) ?? true {
+                i = skip
+            } else if let add = added {
+                // The added lines belong with the Markdown's line before them.
+                while j < add { map.append(max(i - 1, 0)); j += 1 }
+            } else {
+                // A line rewritten in place.
+                map.append(i)
+                i += 1
+                j += 1
+            }
+        }
+        return map
     }
 
     private static let calloutMarker = try! NSRegularExpression(pattern: #"^\[!(\w+)\][+-]?[ \t]*"#)

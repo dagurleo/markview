@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     private lazy var settingsWindow = SettingsWindowController(updater: updater.updater)
     /// What the open windows show, so that only a change of settings shows them again.
     private var shownTheme = Settings.theme
+    private var shownEditorSettings = EditorSettings.current
     private var shownAppearance: String?
     private var pendingSettings: DispatchWorkItem?
 
@@ -79,12 +80,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
             shownAppearance = appearance
             NSApp.appearance = Settings.appearance
         }
+        let editorSettings = EditorSettings.current
+        if editorSettings != shownEditorSettings {
+            shownEditorSettings = editorSettings
+            for controller in viewers { controller.apply(editorSettings) }
+        }
         let theme = Settings.theme
         guard theme != shownTheme else { return }
         shownTheme = theme
-        for document in NSDocumentController.shared.documents {
-            for case let controller as ViewerWindowController in document.windowControllers { controller.show(theme) }
-        }
+        for controller in viewers { controller.show(theme) }
+    }
+
+    private var viewers: [ViewerWindowController] {
+        NSDocumentController.shared.documents.flatMap { $0.windowControllers.compactMap { $0 as? ViewerWindowController } }
+    }
+
+    /// View > Show Line Numbers, which Settings > Editor offers too.
+    @objc private func toggleLineNumbers(_ sender: Any?) {
+        Settings.defaults.set(!EditorSettings.current.lineNumbers, forKey: EditorSettings.Key.lineNumbers)
     }
 
     // MARK: Menu
@@ -164,6 +177,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         substitutions.add("Text Replacement", #selector(NSTextView.toggleAutomaticTextReplacement(_:)))
         edit.add("Substitutions", nil).submenu = substitutions
 
+        // The editor's; enabled while it has the focus.
+        let format = submenu("Format")
+        format.add("Bold", #selector(SourceTextView.toggleBold(_:)), key: "b")
+        format.add("Italic", #selector(SourceTextView.toggleItalic(_:)), key: "i")
+        format.add("Strikethrough", #selector(SourceTextView.toggleStrikethrough(_:)), key: "x", modifiers: [.command, .shift])
+        format.add("Code", #selector(SourceTextView.toggleCode(_:)), key: "e")
+        format.addItem(.separator())
+        format.add("Link", #selector(SourceTextView.insertLink(_:)), key: "k")
+
         let view = submenu("View")
         view.add("Show Sidebar", #selector(ViewerWindowController.toggleOutline(_:)), key: "s", modifiers: [.command, .control])
         view.addItem(.separator())
@@ -172,6 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         view.add("Zoom Out", #selector(ViewerWindowController.zoomPageOut(_:)), key: "-")
         view.addItem(.separator())
         view.add("Show Editor", #selector(DocumentActions.toggleEditor(_:)), key: "u")
+        view.add("Show Line Numbers", #selector(toggleLineNumbers(_:)), key: "l", modifiers: [.command, .option]).target = self
         view.addItem(.separator())
         view.add("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), key: "f", modifiers: [.command, .control])
 
@@ -275,6 +298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(revealInFinder(_:)) || item.action == #selector(copyPath(_:)) { return currentFile != nil }
         if item.action == #selector(makeDefaultViewer(_:)) { item.state = Self.isDefaultViewer ? .on : .off }
+        if item.action == #selector(toggleLineNumbers(_:)) { item.title = EditorSettings.current.lineNumbers ? "Hide Line Numbers" : "Show Line Numbers" }
         return true
     }
 

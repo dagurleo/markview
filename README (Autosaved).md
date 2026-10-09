@@ -203,6 +203,8 @@ exercise it (see `runSmokeTestHooks` in `Native/ViewerWindowController.swift`):
 MARKVIEW_SNAPSHOT=/tmp/page.png build/Markview.app/Contents/MacOS/Markview sample/sample.md
 ```
 
+
+
 renders the page to a PNG at twice its size, prints the open documents and quits after
 `MARKVIEW_SNAPSHOT_DELAY` seconds (default 0.5). Such runs open documents at the top, show
 no outline and leave both settings alone, unless `MARKVIEW_KEEP_PLACE=1` or

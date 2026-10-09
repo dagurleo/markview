@@ -10,11 +10,18 @@ final class SourceEditor: NSView, NSTextViewDelegate {
     let scrollView = NSScrollView()
     private let bar = ChangeOnDiskBar()
     private var theme = Settings.theme
+    private(set) var settings = EditorSettings.current
+    private lazy var lineNumbers = LineNumbers(editor: self)
     /// What the text view lays out while it shows no document. A layout manager does not keep its
     /// text storage, so this one is kept here.
     private let blank = NSTextStorage()
     /// The document whose text is on show.
     private weak var document: MarkdownDocument?
+    /// Called whenever the editor scrolls.
+    var onScroll: () -> Void = {}
+    /// Where each line of the text starts, worked out when first needed after the text changes.
+    private var lineStarts: [Int]?
+    private var textObserver: NSObjectProtocol?
 
     var onDrop: ([URL]) -> Void {
         get { textView.onDrop }
@@ -38,22 +45,17 @@ final class SourceEditor: NSView, NSTextViewDelegate {
         textView.usesFindBar = true
         textView.isIncrementalSearchingEnabled = true
         textView.usesFontPanel = false
-        // Markdown is written for code as much as prose: nothing changes what is typed by itself.
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
         textView.isAutomaticLinkDetectionEnabled = false
         textView.isAutomaticDataDetectionEnabled = false
         textView.smartInsertDeleteEnabled = false
-        textView.isContinuousSpellCheckingEnabled = true
         textView.textContainerInset = NSSize(width: 20, height: 24)
         textView.autoresizingMask = [.width]
         textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
         textView.minSize = NSSize(width: 0, height: frame.height)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.delegate = self
+        textView.onTypingSettingChange = { [weak self] in self?.keepTypingSettings() }
 
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
@@ -73,10 +75,16 @@ final class SourceEditor: NSView, NSTextViewDelegate {
             stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             bar.widthAnchor.constraint(equalTo: stack.widthAnchor), scrollView.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main) { [weak self] _ in
+            self?.lineNumbers.needsDisplay = true
+            self?.onScroll()
+        }
         bar.isHidden = true
         bar.onReload = { [weak self] in self?.document?.reloadDiscardingEdits() }
         bar.onKeep = { [weak self] in self?.document?.keepEdits() }
         apply(theme)
+        apply(settings)
     }
 
     @available(*, unavailable)
@@ -85,7 +93,7 @@ final class SourceEditor: NSView, NSTextViewDelegate {
     /// Shows a document's text, in place of whatever was on show.
     func show(_ document: MarkdownDocument) {
         guard let layout = textView.layoutManager else { return }
-        let storage = document.editableSource(theme: theme)
+        let storage = document.editableSource(theme: editorTheme)
         if self.document !== document { leave() }
         self.document = document
         if layout.textStorage !== storage {
@@ -93,8 +101,9 @@ final class SourceEditor: NSView, NSTextViewDelegate {
             storage.addLayoutManager(layout)
             textView.setSelectedRange(NSRange(location: 0, length: 0))
             textView.scroll(.zero)
+            watch(storage)
         }
-        textView.typingAttributes = document.typingAttributes
+        recolour()
         reflectChangeOnDisk()
     }
 
@@ -106,7 +115,93 @@ final class SourceEditor: NSView, NSTextViewDelegate {
         // A text storage keeps its layout managers, and would go on laying this one out.
         layout.textStorage?.removeLayoutManager(layout)
         blank.addLayoutManager(layout)
+        watch(nil)
         self.document = nil
+    }
+
+    // MARK: Lines
+
+    /// The text changes in this window or another showing the same document.
+    private func watch(_ storage: NSTextStorage?) {
+        textObserver.map(NotificationCenter.default.removeObserver)
+        textObserver = nil
+        lineStarts = nil
+        guard let storage else { return }
+        textObserver = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.lineStarts = nil
+                self?.lineNumbers.textChanged()
+            }
+        }
+    }
+
+    /// Where each line starts.
+    var starts: [Int] {
+        if let lineStarts { return lineStarts }
+        let text = textView.textStorage?.mutableString ?? NSMutableString()
+        var found = [0], location = 0
+        while location < text.length {
+            let newline = text.range(of: "\n", options: .literal, range: NSRange(location: location, length: text.length - location))
+            guard newline.location != NSNotFound else { break }
+            location = NSMaxRange(newline)
+            found.append(location)
+        }
+        lineStarts = found
+        return found
+    }
+
+    /// The line, counting from 0, that holds a character.
+    func line(of character: Int) -> Int {
+        let starts = starts
+        var low = 0, high = starts.count - 1
+        while low < high {
+            let middle = (low + high + 1) / 2
+            if starts[middle] <= character { low = middle } else { high = middle - 1 }
+        }
+        return low
+    }
+
+    /// Where a line is in the view, from the top of its first row to the bottom of its last; the
+    /// first line counts from the top of the view, margin and all, as the page's first block does.
+    private func frame(ofLine line: Int) -> (top: CGFloat, bottom: CGFloat)? {
+        guard let layout = textView.layoutManager, let container = textView.textContainer else { return nil }
+        let starts = starts, length = textView.textStorage?.length ?? 0
+        guard line < starts.count else { return nil }
+        let end = line + 1 < starts.count ? starts[line + 1] : length
+        let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: starts[line], length: max(end - starts[line], 0)), actualCharacterRange: nil)
+        var rect = glyphs.length > 0 ? layout.boundingRect(forGlyphRange: glyphs, in: container) : layout.extraLineFragmentRect
+        rect.origin.y += textView.textContainerOrigin.y
+        return (line == 0 ? 0 : rect.minY, rect.maxY)
+    }
+
+    /// The line at the top of the view, with the fraction of it scrolled past.
+    func topLine() -> Double {
+        guard let layout = textView.layoutManager, let container = textView.textContainer, (textView.textStorage?.length ?? 0) > 0 else { return 0 }
+        let top = scrollView.contentView.bounds.minY
+        let point = NSPoint(x: 0, y: max(top - textView.textContainerOrigin.y, 0))
+        let line = line(of: layout.characterIndexForGlyph(at: layout.glyphIndex(for: point, in: container)))
+        guard let frame = frame(ofLine: line), frame.bottom > frame.top else { return Double(line) }
+        return Double(line) + min(max((top - frame.top) / (frame.bottom - frame.top), 0), 1)
+    }
+
+    /// Scrolls so that a line, with a fraction, is at the top of the view.
+    func scroll(toLine line: Double) {
+        let whole = min(max(Int(line), 0), starts.count - 1)
+        guard let frame = frame(ofLine: whole) else { return }
+        let clip = scrollView.contentView
+        var target = clip.bounds
+        target.origin = NSPoint(x: 0, y: frame.top + (frame.bottom - frame.top) * min(max(line - Double(whole), 0), 1))
+        clip.scroll(to: clip.constrainBoundsRect(target).origin)
+        scrollView.reflectScrolledClipView(clip)
+    }
+
+    /// Puts the insertion point at the start of a line, scrolling it into view if it is not.
+    func reveal(line: Int) {
+        let starts = starts
+        let location = starts[min(max(line, 0), starts.count - 1)]
+        textView.setSelectedRange(NSRange(location: location, length: 0))
+        textView.scrollRangeToVisible(NSRange(location: location, length: 0))
+        window?.makeFirstResponder(textView)
     }
 
     func apply(_ theme: Theme) {
@@ -115,10 +210,56 @@ final class SourceEditor: NSView, NSTextViewDelegate {
         textView.backgroundColor = theme.background
         textView.insertionPointColor = theme.text
         bar.apply(theme)
-        if let document {
-            document.apply(theme)
-            textView.typingAttributes = document.typingAttributes
+        lineNumbers.colors = (theme.muted, theme.background)
+        recolour()
+    }
+
+    /// The theme the text is coloured in: the page's, in the editor's own font if one is chosen.
+    private var editorTheme: Theme {
+        guard !settings.font.isEmpty else { return theme }
+        return Theme(palette: theme.palette, bodySize: theme.bodySize, textFont: theme.textFont, codeFont: settings.font,
+                     columnWidth: theme.columnWidth, lineSpacing: theme.lineSpacing)
+    }
+
+    private func recolour() {
+        guard let document else { return }
+        document.apply(editorTheme)
+        textView.typingAttributes = document.typingAttributes
+        lineNumbers.font = SourceHighlighter.font(editorTheme)
+    }
+
+    /// Settings > Editor, and the Edit menu's spelling and substitutions.
+    func apply(_ settings: EditorSettings) {
+        let fontChanged = settings.font != self.settings.font
+        self.settings = settings
+        textView.indent = settings.indent
+        textView.isContinuousSpellCheckingEnabled = settings.spelling
+        textView.isAutomaticQuoteSubstitutionEnabled = settings.smartQuotes
+        textView.isAutomaticDashSubstitutionEnabled = settings.smartDashes
+        textView.isAutomaticTextReplacementEnabled = settings.textReplacement
+        // Long lines wrap at the edge, or run on with a scroller below.
+        guard let container = textView.textContainer else { return }
+        if settings.wraps != container.widthTracksTextView {
+            container.widthTracksTextView = settings.wraps
+            textView.isHorizontallyResizable = !settings.wraps
+            scrollView.hasHorizontalScroller = !settings.wraps
+            container.size = NSSize(width: settings.wraps ? scrollView.contentSize.width : CGFloat.greatestFiniteMagnitude,
+                                    height: CGFloat.greatestFiniteMagnitude)
+            if settings.wraps { textView.setFrameSize(NSSize(width: scrollView.contentSize.width, height: textView.frame.height)) }
         }
+        if scrollView.verticalRulerView !== lineNumbers { scrollView.verticalRulerView = lineNumbers }
+        scrollView.hasVerticalRuler = settings.lineNumbers
+        scrollView.rulersVisible = settings.lineNumbers
+        if fontChanged { recolour() }
+    }
+
+    /// Keeps what the Edit menu turned on or off, for every editor.
+    private func keepTypingSettings() {
+        let defaults = Settings.defaults
+        defaults.set(textView.isContinuousSpellCheckingEnabled, forKey: EditorSettings.Key.spelling)
+        defaults.set(textView.isAutomaticQuoteSubstitutionEnabled, forKey: EditorSettings.Key.smartQuotes)
+        defaults.set(textView.isAutomaticDashSubstitutionEnabled, forKey: EditorSettings.Key.smartDashes)
+        defaults.set(textView.isAutomaticTextReplacementEnabled, forKey: EditorSettings.Key.textReplacement)
     }
 
     /// Shows the bar while the file on disk has changed under unsaved edits, and hides it once settled.
@@ -147,31 +288,6 @@ final class SourceEditor: NSView, NSTextViewDelegate {
     func textView(_ textView: NSTextView, shouldChangeTypingAttributes oldTypingAttributes: [String: Any] = [:],
                   toAttributes newTypingAttributes: [NSAttributedString.Key: Any] = [:]) -> [NSAttributedString.Key: Any] {
         document?.typingAttributes ?? newTypingAttributes
-    }
-}
-
-/// The editor's text view. Files dropped on it open, as on the page, rather than being typed in as
-/// their paths; dragged text still moves and copies as usual.
-final class SourceTextView: NSTextView {
-    var onDrop: ([URL]) -> Void = { _ in }
-
-    private func files(in sender: NSDraggingInfo) -> [URL] {
-        sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        files(in: sender).isEmpty ? super.draggingEntered(sender) : .copy
-    }
-
-    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        files(in: sender).isEmpty ? super.draggingUpdated(sender) : .copy
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let dropped = files(in: sender)
-        guard !dropped.isEmpty else { return super.performDragOperation(sender) }
-        onDrop(dropped)
-        return true
     }
 }
 

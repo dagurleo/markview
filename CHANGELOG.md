@@ -11,6 +11,12 @@
   changes the file under unsaved edits, a bar above the editor asks which to keep.
   Following a link or going back from unsaved edits asks first. View Source is gone; the
   editor shows the same.
+- The editor and the page scroll together, line for line, and double-clicking the page
+  puts the insertion point on the line it came from. Code blocks in the editor are
+  coloured by language. Return carries lists and quotes on, Tab and ⇧Tab nest list items,
+  and a Format menu marks text bold, italic, struck through, as code or as a link.
+- Line numbers (View > Show Line Numbers, ⌥⌘L) and Settings > Editor: font, line
+  numbers, wrapping, tabs or spaces, spelling and substitutions, kept for every window.
 - A short file in Latin-1 is no longer read as UTF-8 with its accented letters replaced.
 
 ## 0.4.0

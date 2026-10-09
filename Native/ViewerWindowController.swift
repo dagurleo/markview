@@ -28,6 +28,11 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     private var pendingUpdate: DispatchWorkItem?
     /// What to do once the reader has said what becomes of unsaved edits in the document left.
     private var pendingLeave: (() -> Void)?
+    /// While one of the editor and the page is being scrolled to follow the other.
+    private var following = false
+    /// The editor opened before the page knew its source lines: once it does, the editor goes to
+    /// the place on the page.
+    private var editorAwaitsPage = false
     /// Scripted checks open documents at the top and leave the places alone, unless asked.
     private let keepsPlace = ProcessInfo.processInfo.environment["MARKVIEW_SNAPSHOT"] == nil
         || ProcessInfo.processInfo.environment["MARKVIEW_KEEP_PLACE"] != nil
@@ -103,13 +108,29 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         markdownView.willFollowLink = { [weak self] in self?.leaving() }
         markdownView.onPreview = { [weak self] file, frame in self?.showPreview(of: file, from: frame) }
         markdownView.onScroll = { [weak self] in
-            self?.scrolled()
-            self?.markCurrentHeading()
+            guard let self else { return }
+            scrolled()
+            markCurrentHeading()
+            // Scrolled, or gone to a heading or a place: the editor follows. Moved by new text, it
+            // is the page that follows the editor, once the text is in.
+            if !markdownView.isAdjusting { editorFollowsPage() }
         }
         markdownView.onShow = { [weak self] in
             guard let self else { return }
             outline.show(markdownView.headings)
             markCurrentHeading()
+            if editorAwaitsPage {
+                editorAwaitsPage = false
+                editorFollowsPage()
+            } else {
+                pageFollowsEditor()
+            }
+        }
+        editor.onScroll = { [weak self] in self?.pageFollowsEditor() }
+        // A block double-clicked on the page shows where it is written.
+        markdownView.textView.onDoubleClick = { [weak self] character in
+            guard let self, !editorItem.isCollapsed, let line = markdownView.sourceLine(at: character) else { return }
+            editor.reveal(line: line)
         }
         sidebar.files.onSelect = { [weak self] file in
             self?.leavingDocument(for: file) { [weak self] in
@@ -257,6 +278,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         let place = markdownView.place
         if editorItem.isCollapsed {
             editor.show(document)
+            markdownView.tracksSource = true
             let width = CGFloat(UserDefaults.standard.double(forKey: "editorWidth")).clamped(to: 280...1200, default: 560)
             var frame = window.frame
             let room = width + editorDivider.dividerThickness
@@ -281,6 +303,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
                 window.makeFirstResponder(markdownView.textView)
             }
             editorItem.isCollapsed = true
+            markdownView.tracksSource = false
             if roomForEditor != nil, !window.styleMask.contains(.fullScreen) {
                 var frame = window.frame
                 frame.size.width = max(window.minSize.width, frame.width - width - editorDivider.dividerThickness)
@@ -294,7 +317,33 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         DispatchQueue.main.async { [self] in
             if place > 0 { markdownView.go(to: place) } else { markdownView.contentView.scroll(to: .zero) }
             markCurrentHeading()
+            guard !editorItem.isCollapsed else { return }
+            // The editor starts where the page is, once the page knows where its blocks are written.
+            if markdownView.knowsSourceLines {
+                editorFollowsPage()
+            } else {
+                editorAwaitsPage = true
+                textChanged()
+            }
         }
+    }
+
+    // MARK: Editor and page together
+
+    /// The editor and the page show the same place: whichever is scrolled, the other follows, line
+    /// for line of the Markdown, as far as the page's blocks tell where they are written.
+    private func editorFollowsPage() {
+        guard !editorItem.isCollapsed, !following, let line = markdownView.topSourceLine() else { return }
+        following = true
+        editor.scroll(toLine: line)
+        following = false
+    }
+
+    private func pageFollowsEditor() {
+        guard !editorItem.isCollapsed, !following, markdownView.knowsSourceLines else { return }
+        following = true
+        markdownView.scroll(toSourceLine: editor.topLine())
+        following = false
     }
 
     // A window put back after a relaunch opens without the editor, so it gives back the room it had
@@ -312,6 +361,9 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         frame.size.width = max(window.minSize.width, frame.width - room)
         window.setFrame(frame, display: true)
     }
+
+    /// Settings > Editor changed.
+    func apply(_ settings: EditorSettings) { editor.apply(settings) }
 
     /// Opens the editor, as for a new document, if it is not open already.
     func showEditor() {

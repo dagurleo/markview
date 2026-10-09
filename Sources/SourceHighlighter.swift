@@ -8,6 +8,9 @@ import AppKit
 /// state it leaves the next one in. After an edit only the lines touched are coloured again, and
 /// the ones below them for as long as their state changes: typing a fence recolours the rest of
 /// the document, typing a word recolours one line.
+///
+/// The code in fenced blocks is coloured by language as on the page, with highlight.js, off the
+/// main thread once typing pauses (see CodeColours).
 final class SourceHighlighter: NSObject, NSTextStorageDelegate {
     private(set) var theme: Theme
     /// Called after the characters change, not just their colours.
@@ -15,6 +18,9 @@ final class SourceHighlighter: NSObject, NSTextStorageDelegate {
     /// Until an editor shows the text, nothing is coloured.
     private(set) var isActive = false
     private weak var storage: NSTextStorage?
+    /// Where code may need colouring again: what was edited since it was last coloured.
+    private var codeToColour: NSRange?
+    private var pendingCode: DispatchWorkItem?
 
     init(storage: NSTextStorage, theme: Theme) {
         self.storage = storage
@@ -37,6 +43,8 @@ final class SourceHighlighter: NSObject, NSTextStorageDelegate {
         // Fonts are fixed lazily, for characters the code font lacks, over whatever range is still
         // unfixed when an attribute is next read: done now, or each keystroke would fix a large part.
         storage.ensureAttributesAreFixed(in: NSRange(location: 0, length: storage.length))
+        codeToColour = NSRange(location: 0, length: storage.length)
+        colourCodeSoon(after: 0)
     }
 
     /// The attributes text is typed with before it is coloured.
@@ -53,6 +61,7 @@ final class SourceHighlighter: NSObject, NSTextStorageDelegate {
                      range editedRange: NSRange, changeInLength delta: Int) {
         guard editedMask.contains(.editedCharacters), isActive else { return }
         highlightLines(in: editedRange, of: textStorage, untilSettled: true)
+        noteCodeEdited(editedRange, changeInLength: delta)
     }
 
     func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
@@ -127,7 +136,17 @@ final class SourceHighlighter: NSObject, NSTextStorageDelegate {
         let content = text.substring(with: line)
         let body = content.trimmingCharacters(in: .newlines)
         let bodyRange = NSRange(location: line.location, length: (body as NSString).length)
+        // A line of code keeps the colours its language gave it until the block is coloured again,
+        // rather than flashing plain while it is typed in.
+        var kept: [(NSRange, Any)] = []
+        if case .fence = state {
+            storage.enumerateAttribute(Self.codeColour, in: line) { flag, range, _ in
+                guard flag != nil, let color = storage.attribute(.foregroundColor, at: range.location, effectiveRange: nil) else { return }
+                kept.append((range, color))
+            }
+        }
         storage.setAttributes(plain, range: line)
+        for (range, color) in kept { storage.addAttributes([.foregroundColor: color, Self.codeColour: true], range: range) }
         var next = state
 
         func style(_ attributes: [NSAttributedString.Key: Any], _ range: NSRange) {
@@ -298,6 +317,82 @@ final class SourceHighlighter: NSObject, NSTextStorageDelegate {
         }
     }
 
+    // MARK: Code
+
+    /// Marks colours that highlight.js gave code, which a line keeps while it is edited.
+    private static let codeColour = NSAttributedString.Key("MarkviewCodeColour")
+
+    /// An edit moves what is still to be coloured, and adds to it.
+    private func noteCodeEdited(_ range: NSRange, changeInLength delta: Int) {
+        if var pending = codeToColour {
+            let editStart = range.location, previousEnd = range.location + range.length - delta
+            if pending.location >= previousEnd { pending.location += delta }
+            else if NSMaxRange(pending) > editStart { pending.length = max(NSMaxRange(pending) + delta, editStart) - pending.location }
+            codeToColour = NSUnionRange(pending, range)
+        } else {
+            codeToColour = range
+        }
+        colourCodeSoon(after: 0.25)
+    }
+
+    private func colourCodeSoon(after delay: TimeInterval) {
+        pendingCode?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.colourCode() }
+        pendingCode = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// Colours the fenced blocks that what was edited touches.
+    private func colourCode() {
+        guard let storage, let pending = codeToColour, storage.length > 0 else { return }
+        codeToColour = nil
+        let text = storage.mutableString
+        let end = min(NSMaxRange(pending), storage.length)
+        // Back to the start of a block the edit falls inside.
+        var line = text.lineRange(for: NSRange(location: min(pending.location, storage.length - 1), length: 0))
+        while line.location > 0, isFence(state(at: line.location - 1, in: storage)) {
+            line = text.lineRange(for: NSRange(location: line.location - 1, length: 0))
+        }
+        while true {
+            if !isFence(line.location == 0 ? .text : state(at: line.location - 1, in: storage)), isFence(state(at: NSMaxRange(line) - 1, in: storage)),
+               let open = Self.fence(in: text.substring(with: line).trimmingCharacters(in: .newlines)) {
+                // An opening fence: the code runs up to the line that leaves the block.
+                var last = line
+                while NSMaxRange(last) < storage.length {
+                    let next = text.lineRange(for: NSRange(location: NSMaxRange(last), length: 0))
+                    guard isFence(state(at: NSMaxRange(next) - 1, in: storage)) else { break }
+                    last = next
+                }
+                let code = NSRange(location: NSMaxRange(line), length: NSMaxRange(last) - NSMaxRange(line))
+                let language = open.info.split(separator: " ").first.map { $0.lowercased() } ?? ""
+                if code.length > 0, !language.isEmpty { colour(code, as: language, in: storage) }
+                line = last
+            }
+            guard NSMaxRange(line) < end, NSMaxRange(line) < storage.length else { break }
+            line = text.lineRange(for: NSRange(location: NSMaxRange(line), length: 0))
+        }
+    }
+
+    private func isFence(_ state: State?) -> Bool {
+        if case .fence = state { return true }
+        return false
+    }
+
+    private func colour(_ range: NSRange, as language: String, in storage: NSTextStorage) {
+        let code = storage.mutableString.substring(with: range)
+        CodeColours.shared.colours(of: code, language: language, theme: theme) { [weak self, weak storage] colours in
+            // Typed on since: a later colouring takes care of it.
+            guard let self, let storage, NSMaxRange(range) <= storage.length, storage.mutableString.substring(with: range) == code else { return }
+            storage.beginEditing()
+            storage.removeAttribute(Self.codeColour, range: range)
+            storage.addAttribute(.foregroundColor, value: theme.text, range: range)
+            for (part, color) in colours {
+                storage.addAttributes([.foregroundColor: color, Self.codeColour: true], range: NSRange(location: range.location + part.location, length: part.length))
+            }
+            storage.endEditing()
+        }
+    }
+
     /// A fence line: up to three spaces, then three or more backticks or tildes, then the info
     /// string (a backtick fence's info has no backticks).
     private static func fence(in line: String) -> (mark: unichar, count: Int, range: NSRange, info: String, infoRange: NSRange?)? {
@@ -379,5 +474,35 @@ final class SourceHighlighter: NSObject, NSTextStorageDelegate {
         string = [.foregroundColor: theme.string]
         quoteMark = [.foregroundColor: theme.tag]
         listMark = [.foregroundColor: theme.builtin]
+    }
+}
+
+/// highlight.js for the editor's code, shared by every editor and run on a queue of its own: it
+/// lives on once started, holding a few megabytes, as the editor colours code at every pause.
+final class CodeColours {
+    static let shared = CodeColours()
+    private let queue = DispatchQueue(label: "com.dagurleo.markview.code-colours", qos: .userInitiated)
+    private var engine: HighlightEngine?
+    private var engineTheme: Theme?
+
+    /// Calls back on the main thread with the colours of a piece of code, as ranges within it; none
+    /// for a language highlight.js does not know.
+    func colours(of code: String, language: String, theme: Theme, then: @escaping ([(NSRange, NSColor)]) -> Void) {
+        queue.async {
+            if self.engineTheme != theme {
+                self.engine = HighlightEngine(theme: theme)
+                self.engineTheme = theme
+            }
+            var colours: [(NSRange, NSColor)] = []
+            if let engine = self.engine {
+                let text = NSMutableAttributedString(string: code)
+                let whole = NSRange(location: 0, length: text.length)
+                engine.highlight(text, in: whole, language: language)
+                text.enumerateAttribute(.foregroundColor, in: whole) { value, range, _ in
+                    if let color = value as? NSColor { colours.append((range, color)) }
+                }
+            }
+            DispatchQueue.main.async { then(colours) }
+        }
     }
 }

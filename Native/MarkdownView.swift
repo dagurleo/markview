@@ -133,13 +133,21 @@ final class ColumnTextView: NSTextView {
         return (index, frame)
     }
 
+    /// Called with the character double-clicked, if set.
+    var onDoubleClick: ((Int) -> Void)?
+
     // A plain click on a picture that can be shown full size shows it; anything else selects as usual.
     override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
         if event.clickCount == 1, event.modifierFlags.intersection([.shift, .command, .option, .control]).isEmpty,
-           let (index, frame) = picture(at: convert(event.locationInWindow, from: nil)), isPreviewable(index) {
+           let (index, frame) = picture(at: point), isPreviewable(index) {
             return onPictureClick(index, frame)
         }
         super.mouseDown(with: event)
+        if event.clickCount == 2, let onDoubleClick, let layout = layoutManager, let container = textContainer, (textStorage?.length ?? 0) > 0 {
+            let glyph = layout.glyphIndex(for: NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y), in: container)
+            onDoubleClick(layout.characterIndexForGlyph(at: glyph))
+        }
     }
     /// The button that copies the code block under the pointer.
     let copyButton = CopyButton()
@@ -438,6 +446,12 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
     /// Called whenever new text is shown, with its headings, and whenever the view scrolls.
     var onShow: () -> Void = {}
     var onScroll: () -> Void = {}
+    /// Whether to note which line of the Markdown each block of the page came from, for an editor
+    /// beside it. Takes effect from the next render.
+    var tracksSource = false
+    /// Whether the view is moving because its text is being replaced or changed in size, rather than
+    /// because it was scrolled.
+    private(set) var isAdjusting = false
 
     private let linkStatus = LinkStatus()
     private var anchors: [String: Int] = [:]
@@ -459,6 +473,9 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
     /// The drawings of the diagrams on show, so the same document shown again, as it is when
     /// the file changes, keeps them instead of flashing back to code while they are redrawn.
     private var drawn: [String: NSImage] = [:]
+    /// Where the blocks of the page came from in the Markdown, when tracked (see `tracksSource`).
+    private var sourceLines: [NativeRenderer.SourceLine] = []
+    private var sourceLineCount = 0
 
     override init(frame: NSRect) {
         // TextKit 1, because text tables and text blocks need it.
@@ -647,16 +664,17 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
                 let from = markdown.index(markdown.startIndex, offsetBy: 96 * 1024, limitedBy: markdown.endIndex) ?? markdown.endIndex
                 if let cut = markdown.range(of: "\n\n", range: from..<markdown.endIndex) { beginning = String(markdown[..<cut.lowerBound]) }
             }
-            let renderer = NativeRenderer(baseURL: baseURL, theme: theme)
+            let renderer = NativeRenderer(baseURL: baseURL, theme: theme, tracksSource: tracksSource)
             replaceText(with: renderer.render(beginning), from: renderer, keepingPlace: !large && continuing)
         }
         rendering = large
         guard large else { return }
+        let tracksSource = tracksSource
         renderQueue.async {
             // Each takes seconds and hundreds of megabytes, so one already overtaken, as by a
             // file saved again or a setting changed again, is skipped.
             guard DispatchQueue.main.sync(execute: { generation == self.generation }) else { return }
-            let renderer = NativeRenderer(baseURL: baseURL, theme: theme)
+            let renderer = NativeRenderer(baseURL: baseURL, theme: theme, tracksSource: tracksSource)
             let rendered = renderer.render(markdown)
             DispatchQueue.main.async {
                 guard generation == self.generation else { return }
@@ -685,9 +703,10 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         rendering = false
         pendingAnchor = nil
         pendingPlace = nil
+        let tracksSource = tracksSource
         renderQueue.async {
             guard DispatchQueue.main.sync(execute: { generation == self.generation }) else { return }
-            let renderer = NativeRenderer(baseURL: baseURL, theme: theme)
+            let renderer = NativeRenderer(baseURL: baseURL, theme: theme, tracksSource: tracksSource)
             let rendered = renderer.render(markdown)
             DispatchQueue.main.async {
                 guard generation == self.generation else { return }
@@ -710,6 +729,8 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
     /// Swaps in new text and returns to the character that was at the top.
     private func replaceText(with rendered: NSAttributedString, from renderer: NativeRenderer?, keepingPlace: Bool) {
         guard let layout = textView.layoutManager, let container = textView.textContainer else { return }
+        isAdjusting = true
+        defer { isAdjusting = false }
         let top = topCharacter()
         // Pictures already fetched go in before the text is laid out, so it takes their size at once.
         let previous = fetched
@@ -731,6 +752,8 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         textView.textChanged(hasDrawings: renderer?.hasDrawings ?? false, tables: renderer?.fittedTables ?? [])
         anchors = renderer?.anchors ?? [:]
         headings = renderer?.headings ?? []
+        sourceLines = renderer?.sourceLines ?? []
+        sourceLineCount = renderer?.sourceLineCount ?? 0
         if keepingPlace, top > 0 {
             scroll(toCharacter: min(top, rendered.length - 1), margin: 0)
         } else {
@@ -779,6 +802,8 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         }
         guard !placeholders.isEmpty else { return }
         var top = topCharacter()
+        isAdjusting = true
+        defer { isAdjusting = false }
         storage.beginEditing()
         // From the end, so the ranges still to come stay where they were found.
         for (range, index) in placeholders.reversed() {
@@ -794,6 +819,7 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
             // Heading links and the place in the document move with the text after the diagram.
             let shift = (text as NSString).length - range.length
             for (anchor, location) in anchors where location > range.location { anchors[anchor] = location + shift }
+            for index in sourceLines.indices where sourceLines[index].location > range.location { sourceLines[index].location += shift }
             if top > range.location { top = max(range.location, top + shift) }
         }
         storage.endEditing()
@@ -889,6 +915,77 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         }
         contentView.scroll(to: contentView.constrainBoundsRect(target).origin)   // not past either end
         reflectScrolledClipView(contentView)
+    }
+
+    // MARK: Lines of the Markdown
+
+    /// Whether the page knows which lines of the Markdown its blocks came from.
+    var knowsSourceLines: Bool { !sourceLines.isEmpty }
+
+    /// How far down a character's line is, in the view; the very first block counts from the top of
+    /// the view, margin and all, as an editor's first line does.
+    private func top(of index: Int, first: Bool) -> CGFloat {
+        guard !first, let layout = textView.layoutManager, let container = textView.textContainer else { return 0 }
+        let length = textView.textStorage?.length ?? 0
+        guard index < length else { return textView.frame.height }
+        let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: index, length: 1), actualCharacterRange: nil)
+        return layout.boundingRect(forGlyphRange: glyphs, in: container).minY + textView.textContainerOrigin.y
+    }
+
+    /// The block a source line falls in, the next block that starts on a later line, and how far
+    /// between them the line lies, from 0 to 1.
+    private func span(at index: Int) -> (from: Int, to: Int?) {
+        var from = index
+        while from > 0, sourceLines[from - 1].line == sourceLines[index].line { from -= 1 }
+        let to = sourceLines[(index + 1)...].firstIndex { $0.line > sourceLines[index].line }
+        return (from, to)
+    }
+
+    /// The line of the Markdown at the top of the view, with the fraction of it scrolled past, as
+    /// far as the blocks tell.
+    func topSourceLine() -> Double? {
+        guard !sourceLines.isEmpty else { return nil }
+        let character = topCharacter()
+        var low = 0, high = sourceLines.count - 1
+        while low < high {
+            let middle = (low + high + 1) / 2
+            if sourceLines[middle].location <= character { low = middle } else { high = middle - 1 }
+        }
+        let (from, to) = span(at: low)
+        let startY = top(of: sourceLines[from].location, first: from == 0)
+        let endY = to.map { top(of: sourceLines[$0].location, first: false) } ?? textView.frame.height
+        let startLine = Double(sourceLines[from].line), endLine = Double(to.map { sourceLines[$0].line } ?? sourceLineCount)
+        let fraction = endY > startY ? min(max((contentView.bounds.minY - startY) / (endY - startY), 0), 1) : 0
+        return startLine + (endLine - startLine) * fraction
+    }
+
+    /// Scrolls so that a line of the Markdown, with a fraction, is at the top of the view.
+    func scroll(toSourceLine line: Double) {
+        guard !sourceLines.isEmpty else { return }
+        var low = 0, high = sourceLines.count - 1
+        while low < high {
+            let middle = (low + high + 1) / 2
+            if Double(sourceLines[middle].line) <= line { low = middle } else { high = middle - 1 }
+        }
+        let (from, to) = span(at: low)
+        let startY = top(of: sourceLines[from].location, first: from == 0)
+        let endY = to.map { top(of: sourceLines[$0].location, first: false) } ?? textView.frame.height
+        let startLine = Double(sourceLines[from].line), endLine = Double(to.map { sourceLines[$0].line } ?? sourceLineCount)
+        let fraction = endLine > startLine ? min(max((line - startLine) / (endLine - startLine), 0), 1) : 0
+        var target = contentView.bounds
+        target.origin = NSPoint(x: 0, y: startY + (endY - startY) * fraction)
+        contentView.scroll(to: contentView.constrainBoundsRect(target).origin)
+        reflectScrolledClipView(contentView)
+    }
+
+    /// The line of the Markdown a character of the page came from, as near as its block tells.
+    func sourceLine(at character: Int) -> Int? {
+        guard let index = sourceLines.lastIndex(where: { $0.location <= character }) else { return nil }
+        let (from, to) = span(at: index)
+        guard let to else { return sourceLines[from].line }
+        let start = sourceLines[from], end = sourceLines[to]
+        let fraction = Double(character - start.location) / Double(max(end.location - start.location, 1))
+        return start.line + Int(Double(end.line - start.line) * fraction)
     }
 
     // A #heading link in this document is followed here; any other link is the owner's to open.

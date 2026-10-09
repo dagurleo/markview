@@ -3,7 +3,7 @@ import CoreText
 import Sparkle
 import SwiftUI
 
-/// Markview > Settings…: a General and an Appearance pane, each a SwiftUI form, under
+/// Markview > Settings…: General, Appearance and Editor panes, each a SwiftUI form, under
 /// toolbar tabs as in macOS's own apps. A change is written to the defaults at once, and
 /// the app delegate shows it in the open windows.
 final class SettingsWindowController: NSWindowController {
@@ -12,6 +12,7 @@ final class SettingsWindowController: NSWindowController {
         tabs.tabStyle = .toolbar
         tabs.addTabViewItem(Self.pane("General", symbol: "gearshape", GeneralSettings(updater: updater)))
         tabs.addTabViewItem(Self.pane("Appearance", symbol: "paintpalette", AppearanceSettings()))
+        tabs.addTabViewItem(Self.pane("Editor", symbol: "pencil.line", EditorPane()))
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable]
         window.toolbarStyle = .preference
@@ -145,6 +146,72 @@ private struct AppearanceSettings: View {
                 Text("Changes show at once in open windows and in Quick Look.").font(.callout).foregroundStyle(.secondary)
                 Spacer()
                 Button("Restore Defaults") { Settings.Key.all.forEach(UserDefaults.standard.removeObject) }
+            }
+        }
+        .formStyle(.grouped)
+        .scrollDisabled(true)
+        .frame(width: 560)
+        .fixedSize()
+        .task { families = await FontFamilies.installed() }
+    }
+}
+
+/// The editor beside the page: its font, line numbers and wrapping, what Tab inserts, and what
+/// typing changes by itself.
+private struct EditorPane: View {
+    @AppStorage(EditorSettings.Key.font) private var font = ""
+    @AppStorage(EditorSettings.Key.lineNumbers) private var lineNumbers = EditorSettings().lineNumbers
+    @AppStorage(EditorSettings.Key.wraps) private var wraps = EditorSettings().wraps
+    @AppStorage(EditorSettings.Key.indentWithTabs) private var indentWithTabs = EditorSettings().indentWithTabs
+    @AppStorage(EditorSettings.Key.indentWidth) private var indentWidth = EditorSettings().indentWidth
+    @AppStorage(EditorSettings.Key.spelling) private var spelling = EditorSettings().spelling
+    @AppStorage(EditorSettings.Key.smartQuotes) private var smartQuotes = EditorSettings().smartQuotes
+    @AppStorage(EditorSettings.Key.smartDashes) private var smartDashes = EditorSettings().smartDashes
+    @AppStorage(EditorSettings.Key.textReplacement) private var textReplacement = EditorSettings().textReplacement
+    @State private var families = FontFamilies()
+
+    var body: some View {
+        Form {
+            Section {
+                Picker(selection: $font) {
+                    Text("Same as code").tag("")
+                    Divider()
+                    ForEach(families.choices(families.code, keeping: font, besides: [""]), id: \.self) { Text($0).tag($0) }
+                } label: {
+                    Text("Font")
+                    Text("At the size of code on the page, which the text size sets")
+                }
+                Toggle("Show line numbers", isOn: $lineNumbers)
+                Toggle("Wrap long lines", isOn: $wraps)
+            }
+            Section {
+                Picker("Tab inserts", selection: $indentWithTabs) {
+                    Text("Spaces").tag(false)
+                    Text("A tab").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                Picker("Indent width", selection: $indentWidth) {
+                    Text("2").tag(2)
+                    Text("4").tag(4)
+                    Text("8").tag(8)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .disabled(indentWithTabs)
+                Text("On a list item, Tab nests it under the item above, lined up with that item's text.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Section("While typing") {
+                Toggle("Check spelling", isOn: $spelling)
+                Toggle("Smart quotes", isOn: $smartQuotes)
+                Toggle("Smart dashes", isOn: $smartDashes)
+                Toggle("Text replacement", isOn: $textReplacement)
+            }
+            HStack {
+                Text("Spelling leaves code, addresses and tags alone.").font(.callout).foregroundStyle(.secondary)
+                Spacer()
+                Button("Restore Defaults") { EditorSettings.Key.all.forEach(UserDefaults.standard.removeObject) }
             }
         }
         .formStyle(.grouped)
