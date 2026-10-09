@@ -29,10 +29,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
-    // Launching without a file asks for one, rather than starting a new document (File > New).
+    // Launching without a file, or clicking the Dock icon with no window open, shows the start
+    // window, or with it turned off asks for a file, rather than starting a new document.
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { true }
 
+    // With every window miniaturised, the Dock icon brings one back.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag, let window = NSApp.windows.first(where: \.isMiniaturized) else { return true }
+        window.deminiaturize(nil)
+        return false
+    }
+
     func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        if StartWindow.isOn {
+            StartWindow.show()
+            return true
+        }
         let controller = NSDocumentController.shared
         controller.beginOpenPanel { urls in
             guard let urls, !urls.isEmpty else {

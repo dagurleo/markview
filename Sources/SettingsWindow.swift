@@ -44,6 +44,7 @@ private final class SettingsTabs: NSTabViewController {
 
 private struct GeneralSettings: View {
     let updater: SPUUpdater
+    @AppStorage(StartWindow.key) private var startWindow = true
     /// Bumped to read the updater and the default app again.
     @State private var refresh = 0
 
@@ -63,6 +64,10 @@ private struct GeneralSettings: View {
             } label: {
                 Text("Default Markdown app")
                 Text("The app that opens Markdown files from Finder")
+            }
+            Toggle(isOn: $startWindow) {
+                Text("Show the start window when no document is open")
+                Text("With recent documents, at launch and when the last window closes. Otherwise Markview asks for a file at launch, and quits when its last window closes")
             }
         }
         .formStyle(.grouped)

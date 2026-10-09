@@ -105,6 +105,10 @@ Markview menu checks at any time. Version 0.1.0 predates this and is updated by 
   Markdown files in the sidebar, keeping up as files come and go; hidden folders and
   `node_modules` are left out.
 - Reopens each document where it was last read (for the last 200 documents).
+- Shows a start window while no document is open: at launch without a file, when the
+  last window closes, and on a click on the Dock icon. It has New Document, Open… and
+  the documents and folders opened lately. Turned off in Settings > General, Markview
+  asks for a file at launch and quits when its last window closes.
 - Shows where a link leads in the corner of the window while the pointer is over it,
   puts a copy button on code blocks, and offers "Copy Link to Heading" in a heading's
   context menu (as `file.md#heading`, the way Markdown links to it).

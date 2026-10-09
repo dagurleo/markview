@@ -147,10 +147,8 @@ final class MarkdownDocument: NSDocument {
     override func close() {
         watcher = nil
         super.close()
-        // Nothing left to show: quit rather than linger in the Dock.
-        DispatchQueue.main.async {
-            if NSDocumentController.shared.documents.isEmpty { NSApp.terminate(nil) }
-        }
+        // Nothing left to show: the start window, or quitting rather than lingering in the Dock.
+        DispatchQueue.main.async { StartWindow.nothingOpen() }
     }
 
     // MARK: The text

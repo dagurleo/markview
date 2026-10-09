@@ -25,6 +25,10 @@
 - Files dropped on the editor, or pasted after copying them in the Finder, go in as links
   to them, pictures as pictures. Dropped on the page, they still open.
 - "Make Default Markdown Viewer" in the Markview menu is now "Make Default Markdown App".
+- A start window shows while no document is open: at launch without a file, when the last
+  window closes, and on a click on the Dock icon. It has New Document, Open… and the
+  documents and folders opened lately. Turned off in Settings > General, Markview quits
+  when its last window closes, as before.
 - A short file in Latin-1 is no longer read as UTF-8 with its accented letters replaced.
 
 ## 0.4.0
