@@ -1,0 +1,1082 @@
+/* The site is a Markview window. Every colour comes from the active theme (src/lib/palettes.ts),
+   whose variables are named after Native/Palette.swift's roles: --background, --text, --muted,
+   --border, --subtle, --link, --mark, the alert colours and the code colours. */
+
+:root {
+  --sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", system-ui,
+    sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --titlebar: 52px;
+  --chrome: color-mix(in srgb, var(--subtle) 60%, var(--background));
+  --selection: color-mix(in srgb, var(--link) 13%, transparent);
+  --hover: color-mix(in srgb, var(--text) 6%, transparent);
+  color-scheme: light dark;
+}
+
+:root[data-appearance="light"] {
+  color-scheme: light;
+}
+
+:root[data-appearance="dark"] {
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--text);
+  font: 16px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The window fills the screen, so the page area reaches the bottom however short the page is. */
+
+.window {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* The title bar */
+
+.titlebar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--titlebar);
+  padding: 0 12px 0 18px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.lights {
+  display: flex;
+  gap: 8px;
+  margin-right: 12px;
+}
+
+.lights i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ff5f57;
+  box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.2);
+}
+
+.lights i:nth-child(2) {
+  background: #febc2e;
+}
+
+.lights i:nth-child(3) {
+  background: #28c840;
+}
+
+.sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.sidebar-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin-right: auto;
+  white-space: nowrap;
+}
+
+.title svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.title .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.title .folder {
+  color: var(--muted);
+}
+
+.theme-menu {
+  position: relative;
+}
+
+/* The title bar's buttons share one height and outline, so they sit as a set. */
+.theme-button,
+.github,
+.download {
+  box-sizing: border-box;
+  height: 30px;
+  margin: 0;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 7px;
+  padding: 0 12px;
+  font: 500 13px/1 var(--sans);
+}
+
+.theme-button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding-left: 10px;
+  border-color: color-mix(in srgb, var(--text) 42%, transparent);
+  background: var(--background);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.theme-button:hover,
+.theme-button[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--text) 5%, var(--background));
+}
+
+/* GitHub's classic button: its mark and Star, outlined like the theme button. It opens the
+   repository, where visitors can star it; the theme is called GitHub too, hence Star. */
+.github {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-color: color-mix(in srgb, var(--text) 42%, transparent);
+  background: var(--background);
+  color: var(--text);
+}
+
+.github:hover {
+  background: color-mix(in srgb, var(--text) 5%, var(--background));
+  text-decoration: none;
+}
+
+.theme-button svg {
+  color: var(--muted);
+}
+
+.swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 25%, transparent);
+}
+
+/* The theme panel, laid out like the Appearance pane of Markview's Settings */
+
+.theme-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: 340px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--background);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
+}
+
+.panel-label {
+  margin: 0 2px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.theme-grid + .panel-label {
+  margin-top: 16px;
+}
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px 6px;
+}
+
+.theme-tile {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: 500 11px var(--sans);
+  cursor: pointer;
+}
+
+.sides {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 9px;
+}
+
+.theme-tile:hover .sides {
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.theme-tile[aria-pressed="true"] .sides {
+  box-shadow: 0 0 0 2px var(--link);
+}
+
+.side {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  width: 30px;
+  height: 36px;
+  padding: 5px 5px 0;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px rgb(127 127 127 / 0.25);
+  font: 700 11px/1 var(--sans);
+}
+
+.side i {
+  display: block;
+  height: 2px;
+  border-radius: 1px;
+  opacity: 0.5;
+}
+
+.side i:last-child {
+  width: 70%;
+  opacity: 1;
+}
+
+.tile-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.segmented {
+  display: flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--subtle);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.segmented button {
+  flex: 1;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: 500 12px var(--sans);
+  cursor: pointer;
+}
+
+.segmented button[aria-checked="true"] {
+  background: var(--background);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.15),
+    0 0 0 0.5px rgb(0 0 0 / 0.08);
+}
+
+:root[data-appearance="dark"] .segmented button[aria-checked="true"] {
+  background: color-mix(in srgb, var(--text) 16%, var(--subtle));
+}
+
+/* The download buttons are Apple's black badge: white on black, with a thin grey border, in
+   every theme. */
+
+.download {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-color: #a6a6a6;
+  background: #000;
+  color: #fff;
+  white-space: nowrap;
+}
+
+/* Raised half a point, to sit level with the letters rather than the button's middle. */
+.download svg {
+  margin-top: -1px;
+}
+
+.download:hover {
+  background: #1f1f1f;
+  text-decoration: none;
+}
+
+/* The keyboard shortcuts, in a panel like the theme menu's */
+
+.shortcuts {
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--background);
+  color: var(--text);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 0.3);
+}
+
+.shortcuts::backdrop {
+  background: rgb(0 0 0 / 0.3);
+}
+
+.shortcuts-body {
+  padding: 20px 24px 18px;
+}
+
+.shortcuts h2 {
+  margin: 0 0 16px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.shortcut-groups {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px 32px;
+}
+
+.shortcuts h3 {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.shortcuts dl {
+  margin: 0;
+}
+
+.shortcut {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.shortcut:first-child {
+  border-top: 0;
+}
+
+.shortcut dt {
+  flex: none;
+}
+
+/* A second set of keys goes onto a line of its own rather than squeezing the label. */
+.shortcut dd {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 5px;
+  min-width: 0;
+  margin: 0;
+}
+
+.alternative {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.or {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.shortcuts-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+.done {
+  height: 28px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--link);
+  color: var(--background);
+  font: 600 13px var(--sans);
+  cursor: pointer;
+}
+
+/* The notice naming a theme chosen from the keyboard */
+
+.notice {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  z-index: 40;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 9px;
+  background: var(--text);
+  color: var(--background);
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 8px);
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+}
+
+.notice[data-shown="true"] {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* The sidebar */
+
+.body {
+  display: grid;
+  flex: 1;
+  grid-template-columns: 248px minmax(0, 1fr);
+}
+
+.sidebar {
+  position: sticky;
+  top: var(--titlebar);
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--titlebar));
+  overflow-y: auto;
+  padding: 12px 10px;
+  background: var(--subtle);
+  border-right: 1px solid var(--border);
+}
+
+/* Hidden with S or ⌃⌘S on wide screens; narrow screens slide it in and out instead. */
+@media (min-width: 821px) {
+  .body[data-sidebar="hidden"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .body[data-sidebar="hidden"] .sidebar {
+    display: none;
+  }
+}
+
+.shortcuts-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font: 500 13px var(--sans);
+  cursor: pointer;
+}
+
+.shortcuts-button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.shortcuts-button kbd,
+.shortcuts kbd {
+  min-width: 20px;
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--background);
+  color: var(--text);
+  font: 500 11px/1.3 var(--sans);
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.tabs {
+  display: flex;
+  gap: 16px;
+  padding: 2px 8px 12px;
+}
+
+.tabs button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: 600 13px var(--sans);
+  cursor: pointer;
+}
+
+.tabs button[aria-selected="true"] {
+  color: var(--text);
+}
+
+.sidebar ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.row:hover {
+  background: var(--hover);
+  text-decoration: none;
+}
+
+.row svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.row.on {
+  background: var(--selection);
+  color: var(--link);
+  font-weight: 600;
+}
+
+.row.on svg {
+  color: var(--link);
+}
+
+.outline .row {
+  font-size: 13px;
+}
+
+.outline [data-depth="3"] .row {
+  padding-left: 22px;
+}
+
+.sidebar .empty {
+  margin: 4px 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* The page, drawn as Markview draws Markdown: GitHub's sizes and spacing, the theme's colours */
+
+.page {
+  min-width: 0;
+  padding: 40px 32px 120px;
+}
+
+.markdown {
+  max-width: 736px;
+  margin: 0 auto;
+  font-size: 16px;
+  line-height: 1.6;
+  overflow-wrap: break-word;
+}
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: 24px 0 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  scroll-margin-top: calc(var(--titlebar) + 16px);
+}
+
+.markdown h1,
+.markdown h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+}
+
+.markdown h1 {
+  font-size: 32px;
+}
+
+.markdown h2 {
+  font-size: 24px;
+}
+
+.markdown h3 {
+  font-size: 20px;
+}
+
+.markdown h4 {
+  font-size: 16px;
+}
+
+.markdown h5 {
+  font-size: 14px;
+}
+
+.markdown h6 {
+  font-size: 13.6px;
+  color: var(--muted);
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown table,
+.markdown blockquote,
+.markdown .alert,
+.markdown .code-block {
+  margin: 0 0 16px;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 2em;
+}
+
+.markdown li + li {
+  margin-top: 0.25em;
+}
+
+.markdown strong {
+  font-weight: 600;
+}
+
+.markdown code {
+  padding: 0.2em 0.4em;
+  border-radius: 6px;
+  background: var(--subtle);
+  font: 85%/1.45 var(--mono);
+}
+
+.markdown pre {
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--subtle);
+  line-height: 1.45;
+}
+
+.markdown pre code {
+  padding: 0;
+  background: none;
+  font-size: 13.6px;
+}
+
+.code-block {
+  position: relative;
+}
+
+.copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--muted);
+  font: 500 12px var(--sans);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.code-block:hover .copy,
+.copy:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .copy {
+    opacity: 1;
+  }
+}
+
+.markdown blockquote {
+  padding: 0 1em;
+  border-left: 0.25em solid var(--border);
+  color: var(--muted);
+}
+
+.alert {
+  padding: 0 1em;
+  border-left: 0.25em solid var(--alert);
+}
+
+.alert .alert-title {
+  margin-bottom: 4px;
+  color: var(--alert);
+  font-weight: 600;
+}
+
+.alert > :last-child {
+  margin-bottom: 0;
+}
+
+.alert-note {
+  --alert: var(--note);
+}
+
+.alert-tip {
+  --alert: var(--tip);
+}
+
+.alert-important {
+  --alert: var(--important);
+}
+
+.alert-warning {
+  --alert: var(--warning);
+}
+
+.alert-caution {
+  --alert: var(--caution);
+}
+
+.markdown table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+  border-collapse: collapse;
+}
+
+.markdown th,
+.markdown td {
+  padding: 6px 13px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown th {
+  background: var(--subtle);
+  font-weight: 600;
+}
+
+.markdown img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.markdown [align="center"] {
+  text-align: center;
+}
+
+.markdown hr {
+  height: 1px;
+  margin: 24px 0;
+  border: 0;
+  background: var(--border);
+}
+
+.markdown kbd {
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--subtle);
+  font: 12px var(--mono);
+}
+
+.markdown mark {
+  background: var(--mark);
+  color: inherit;
+}
+
+/* The README's header, centred as READMEs do it with HTML */
+
+.markdown .intro {
+  padding: 8px 0 32px;
+}
+
+.markdown .intro .icon {
+  border: 0;
+  border-radius: 0;
+  filter: drop-shadow(0 6px 10px rgb(0 0 0 / 0.18));
+}
+
+.markdown .intro h1 {
+  margin: 12px 0 4px;
+  padding: 0;
+  border: 0;
+  font-size: 40px;
+  letter-spacing: -0.02em;
+}
+
+.markdown .intro .tagline {
+  margin-bottom: 24px;
+  color: var(--muted);
+  font-size: 20px;
+  text-wrap: balance;
+}
+
+.markdown .intro p {
+  margin-bottom: 12px;
+}
+
+.markdown .intro .meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.download-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 22px 12px 20px;
+  border: 1px solid #a6a6a6;
+  border-radius: 10px;
+  background: #000;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.download-button::before {
+  content: "";
+  width: 16px;
+  height: 19px;
+  margin-top: -3px;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 17 20'%3E%3Cpath d='M14.1 10.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.3-.9-1.7 0-3.3 1-4.2 2.5-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8 1.6 0 2 .8 3.3.8 1.4 0 2.3-1.3 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9 0 0-2.7-1-2.7-4zM11.6 3c.7-.9 1.2-2 1-3.2-1 0-2.2.7-3 1.5-.6.7-1.2 1.9-1 3.1 1.1.1 2.3-.6 3-1.4z'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.download-button:hover {
+  background: #1f1f1f;
+  text-decoration: none;
+}
+
+/* Pictures for one appearance, marked as GitHub and Markview read them */
+
+.markdown img[src$="#gh-dark-mode-only"] {
+  display: none;
+}
+
+:root[data-appearance="dark"] .markdown img[src$="#gh-dark-mode-only"] {
+  display: inline-block;
+}
+
+:root[data-appearance="dark"] .markdown img[src$="#gh-light-mode-only"] {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-appearance]) .markdown img[src$="#gh-dark-mode-only"] {
+    display: inline-block;
+  }
+
+  :root:not([data-appearance]) .markdown img[src$="#gh-light-mode-only"] {
+    display: none;
+  }
+}
+
+/* highlight.js classes, given the theme's code colours as HighlightEngine.swift gives them */
+
+.hljs-keyword,
+.hljs-doctag,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type,
+.hljs-deletion,
+.hljs-variable.language_ {
+  color: var(--keyword);
+}
+
+.hljs-title {
+  color: var(--title);
+}
+
+.hljs-variable,
+.hljs-attr,
+.hljs-attribute,
+.hljs-literal,
+.hljs-meta,
+.hljs-number,
+.hljs-operator,
+.hljs-selector-attr,
+.hljs-selector-class,
+.hljs-selector-id,
+.hljs-section {
+  color: var(--literal);
+}
+
+.hljs-string,
+.hljs-regexp {
+  color: var(--string);
+}
+
+.hljs-built_in,
+.hljs-symbol {
+  color: var(--builtin);
+}
+
+.hljs-comment,
+.hljs-code,
+.hljs-formula {
+  color: var(--comment);
+}
+
+.hljs-name,
+.hljs-quote,
+.hljs-selector-tag,
+.hljs-selector-pseudo,
+.hljs-addition {
+  color: var(--tag);
+}
+
+/* Narrow screens: the sidebar slides over the page */
+
+@media (max-width: 820px) {
+  .lights {
+    display: none;
+  }
+
+  .theme-panel {
+    position: fixed;
+    top: calc(var(--titlebar) + 6px);
+    right: 8px;
+    left: 8px;
+    width: auto;
+  }
+
+  .sidebar-toggle[aria-expanded="true"] {
+    background: var(--hover);
+    color: var(--text);
+  }
+
+  .titlebar {
+    padding-left: 8px;
+  }
+
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    position: fixed;
+    top: var(--titlebar);
+    bottom: 0;
+    left: 0;
+    z-index: 15;
+    width: min(300px, 85vw);
+    height: auto;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease-out;
+  }
+
+  .sidebar[data-open="true"] {
+    transform: none;
+    box-shadow: 0 10px 40px rgb(0 0 0 / 0.25);
+  }
+
+  .page {
+    padding: 28px 18px 80px;
+  }
+}
+
+@media (max-width: 560px) {
+  .for-mac,
+  .theme-name,
+  .github-label {
+    display: none;
+  }
+
+  .github {
+    padding: 0 8px;
+  }
+
+  .shortcut-groups {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .title .folder {
+    display: none;
+  }
+
+  .markdown .intro h1 {
+    font-size: 34px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .copy,
+  .notice {
+    transition: none;
+  }
+}

@@ -1,0 +1,12 @@
+{
+  // The site is prerendered to static files in dist/client, and Cloudflare serves them as the
+  // Worker's static assets: no server code runs. Build before deploying (bun run deploy does both).
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "markview-site",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist/client",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}
