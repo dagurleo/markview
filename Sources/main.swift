@@ -116,7 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         app.addItem(.separator())
         app.add("Settings…", #selector(showSettings(_:)), key: ",").target = self
         app.addItem(.separator())
-        app.add("Make Default Markdown Viewer", #selector(makeDefaultViewer(_:))).target = self
+        app.add("Make Default Markdown App", #selector(makeDefaultApp(_:))).target = self
         app.addItem(.separator())
         app.add("Hide Markview", #selector(NSApplication.hide(_:)), key: "h")
         app.add("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), key: "h", modifiers: [.command, .option])
@@ -294,23 +294,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         NSPasteboard.general.setString(file.path, forType: .string)
     }
 
-    // "Make Default Markdown Viewer" is ticked while Markview already is the default.
+    // "Make Default Markdown App" is ticked while Markview already is the default.
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(revealInFinder(_:)) || item.action == #selector(copyPath(_:)) { return currentFile != nil }
-        if item.action == #selector(makeDefaultViewer(_:)) { item.state = Self.isDefaultViewer ? .on : .off }
+        if item.action == #selector(makeDefaultApp(_:)) { item.state = Self.isDefaultApp ? .on : .off }
         if item.action == #selector(toggleLineNumbers(_:)) { item.title = EditorSettings.current.lineNumbers ? "Hide Line Numbers" : "Show Line Numbers" }
         return true
     }
 
-    static var isDefaultViewer: Bool {
+    static var isDefaultApp: Bool {
         let handler = markdown.flatMap { NSWorkspace.shared.urlForApplication(toOpen: $0) }
         return handler.flatMap { Bundle(url: $0)?.bundleIdentifier } == Bundle.main.bundleIdentifier
     }
 
-    @objc private func makeDefaultViewer(_ sender: Any?) { Self.makeDefaultViewer() }
+    @objc private func makeDefaultApp(_ sender: Any?) { Self.makeDefaultApp() }
 
     /// Calls back on the main thread once the switch is made or refused.
-    static func makeDefaultViewer(then done: @escaping () -> Void = {}) {
+    static func makeDefaultApp(then done: @escaping () -> Void = {}) {
         guard let markdown else { return }
         NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpen: markdown) { error in
             // macOS asks the user to confirm the switch itself; declining is not a failure.

@@ -55,13 +55,13 @@ private struct GeneralSettings: View {
                 get: { updater.automaticallyChecksForUpdates },
                 set: { updater.automaticallyChecksForUpdates = $0; refresh += 1 }))
             LabeledContent {
-                if AppDelegate.isDefaultViewer {
+                if AppDelegate.isDefaultApp {
                     Text("Markview").foregroundStyle(.secondary)
                 } else {
-                    Button("Make Default") { AppDelegate.makeDefaultViewer { refresh += 1 } }
+                    Button("Make Default") { AppDelegate.makeDefaultApp { refresh += 1 } }
                 }
             } label: {
-                Text("Default Markdown viewer")
+                Text("Default Markdown app")
                 Text("The app that opens Markdown files from Finder")
             }
         }

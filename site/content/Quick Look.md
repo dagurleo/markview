@@ -10,4 +10,4 @@ Select a Markdown file in Finder and press Space. Markview draws the preview wit
 - In Markview itself, clicking a picture shows it full size in a Quick Look panel.
 
 > [!TIP]
-> Open Markview once after installing it, so that macOS picks up its preview. Then choose **Make Default Markdown Viewer** in the Markview menu, and Markdown files open in Markview with a double-click.
+> Open Markview once after installing it, so that macOS picks up its preview. Then choose **Make Default Markdown App** in the Markview menu, and Markdown files open in Markview with a double-click.

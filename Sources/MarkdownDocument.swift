@@ -179,6 +179,9 @@ final class MarkdownDocument: NSDocument {
     /// Colours the lines just edited, once the edit is done (see SourceHighlighter.colourEdits).
     func colourEdits() { highlighter?.colourEdits() }
 
+    /// Colours a part of the text coming into view, if it is not coloured yet.
+    func colourNow(_ range: NSRange) { highlighter?.colourNow(range) }
+
     /// Puts new text in place of the old, as when the file is read again. In an editor only the part
     /// that differs is replaced, so the selection and the place in the text stay where they were.
     private func setText(_ new: String) {

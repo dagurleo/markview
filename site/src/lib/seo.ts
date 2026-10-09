@@ -5,7 +5,7 @@ import type { files } from "@/pages"
 export function pageHead(file: (typeof files)[number]) {
   const title =
     file.path === "/"
-      ? "Markview, a Markdown viewer for macOS"
+      ? "Markview, a Markdown viewer and editor for macOS"
       : `${file.page.title || file.name} · Markview`
   const description = file.page.description
   return {

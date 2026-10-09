@@ -10,7 +10,8 @@
   written back in the encoding, byte order mark and line endings it had. If another app
   changes the file under unsaved edits, a bar above the editor asks which to keep.
   Following a link or going back from unsaved edits asks first. View Source is gone; the
-  editor shows the same.
+  editor shows the same. It opens at once on long documents too, colouring what is on
+  show first.
 - The editor and the page scroll together, line for line, and double-clicking the page
   puts the insertion point on the line it came from. Code blocks in the editor are
   coloured by language. Return carries lists and quotes on, Tab and ⇧Tab nest list items,
@@ -21,6 +22,9 @@
   by language, tables, links, pictures, math, Mermaid diagrams, callouts, footnotes and
   more. In a table, Tab moves from cell to cell and Return adds a row, with the columns
   lined up. Pasting an address over selected text makes it a link.
+- Files dropped on the editor, or pasted after copying them in the Finder, go in as links
+  to them, pictures as pictures. Dropped on the page, they still open.
+- "Make Default Markdown Viewer" in the Markview menu is now "Make Default Markdown App".
 - A short file in Latin-1 is no longer read as UTF-8 with its accented letters replaced.
 
 ## 0.4.0

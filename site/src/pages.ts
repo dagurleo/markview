@@ -1,4 +1,5 @@
 import readme from "../content/README.md"
+import editor from "../content/Editor.md"
 import quickLook from "../content/Quick Look.md"
 import themes from "../content/Themes.md"
 import mathsAndDiagrams from "../content/Maths and diagrams.md"
@@ -16,6 +17,7 @@ const entry = (name: string, page: Page) => ({ name, path: pathForFile(name), pa
 /** The files in the sidebar, in its order. The name is the file's, as Markview lists it. */
 export const files = [
   entry("README", readme),
+  entry("Editor", editor),
   entry("Quick Look", quickLook),
   entry("Themes", themes),
   entry("Maths and diagrams", mathsAndDiagrams),

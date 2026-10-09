@@ -5,10 +5,9 @@ import UniformTypeIdentifiers
 /// indent list items and selected lines, and the Format menu marks text as bold, italic, code or a
 /// link. In a table, Tab goes from cell to cell and Return starts a row, lining the columns up.
 /// Typing `/` opens a menu of things to insert (see SlashCommand), and pasting an address over
-/// selected text makes it a link. Files dropped on it open, as on the page, rather than being
-/// typed in as their paths; dragged text still moves and copies as usual.
+/// selected text makes it a link. Files dropped on it, or pasted after copying them in the Finder,
+/// go in as links to them, pictures as pictures; dragged text still moves and copies as usual.
 final class SourceTextView: NSTextView {
-    var onDrop: ([URL]) -> Void = { _ in }
     /// One step of indentation (see EditorSettings).
     var indent = "    "
     /// Whether typing `/` opens the slash menu (see EditorSettings).
@@ -510,10 +509,20 @@ final class SourceTextView: NSTextView {
             guard let self, response == .OK, let file = panel.url else { return }
             // The text may have changed meanwhile, in another window.
             let range = NSMaxRange(typed) <= text.length && text.substring(with: typed) == word ? typed : selectedRange()
-            let name = file.deletingPathExtension().lastPathComponent.filter { !"⟨⟩".contains($0) }
-                .replacingOccurrences(of: "[", with: "\\[").replacingOccurrences(of: "]", with: "\\]")
-            insert([(range, "![⟨\(name)⟩](\(path(to: file)))")])
+            insert([(range, "![⟨\(Self.name(of: file))⟩](\(path(to: file)))")])
         }
+    }
+
+    /// A link to a file: a picture shows, as `![name](path)`; anything else is `[name](path)`.
+    private func link(to file: URL) -> String {
+        let picture = UTType(filenameExtension: file.pathExtension)?.conforms(to: .image) ?? false
+        return (picture ? "!" : "") + "[\(Self.name(of: file))](\(path(to: file)))"
+    }
+
+    /// A file's name as a link's text: without its extension, and with its brackets escaped.
+    private static func name(of file: URL) -> String {
+        file.deletingPathExtension().lastPathComponent.filter { !"⟨⟩".contains($0) }
+            .replacingOccurrences(of: "[", with: "\\[").replacingOccurrences(of: "]", with: "\\]")
     }
 
     /// How the document refers to a file: from its folder, or by its full path if they have only
@@ -719,24 +728,26 @@ final class SourceTextView: NSTextView {
         onTypingSettingChange()
     }
 
-    // MARK: Dropping files
+    // MARK: Dropping and pasting files
 
-    private func files(in sender: NSDraggingInfo) -> [URL] {
-        sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+    // Files are read before anything else on the pasteboard, such as their names as text. The text
+    // view puts what it reads where the files were dropped, or in place of the selection.
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] { [.fileURL] + super.readablePasteboardTypes }
+
+    override func preferredPasteboardType(from availableTypes: [NSPasteboard.PasteboardType],
+                                          restrictedToTypesFrom allowedTypes: [NSPasteboard.PasteboardType]?) -> NSPasteboard.PasteboardType? {
+        if availableTypes.contains(.fileURL), allowedTypes?.contains(.fileURL) ?? true { return .fileURL }
+        return super.preferredPasteboardType(from: availableTypes, restrictedToTypesFrom: allowedTypes)
     }
 
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        files(in: sender).isEmpty ? super.draggingEntered(sender) : .copy
-    }
-
-    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        files(in: sender).isEmpty ? super.draggingUpdated(sender) : .copy
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let dropped = files(in: sender)
-        guard !dropped.isEmpty else { return super.performDragOperation(sender) }
-        onDrop(dropped)
+    override func readSelection(from pasteboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
+        // A drag from the Finder is read by the file names it also carries.
+        guard type == .fileURL || type.rawValue == "NSFilenamesPboardType" else { return super.readSelection(from: pasteboard, type: type) }
+        let files = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        guard !files.isEmpty else { return false }
+        breakUndoCoalescing()
+        insertText(files.map(link).joined(separator: "\n"), replacementRange: selectedRange())
+        breakUndoCoalescing()
         return true
     }
 }

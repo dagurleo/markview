@@ -27,7 +27,7 @@ export const shortcutGroups: { title: string; rows: ShortcutRow[] }[] = [
   {
     title: "Pages",
     rows: [
-      { label: "Open a file in the sidebar", keys: [[["1"], ["8"]]], joiner: "to" },
+      { label: "Open a file in the sidebar", keys: [[["1"], ["9"]]], joiner: "to" },
       { label: "Next or previous file", keys: [[["J"], ["K"]]] },
       {
         label: "Back or Forward",

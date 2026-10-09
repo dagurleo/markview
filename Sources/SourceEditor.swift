@@ -23,11 +23,6 @@ final class SourceEditor: NSView, NSTextViewDelegate {
     private var lineStarts: [Int]?
     private var textObserver: NSObjectProtocol?
 
-    var onDrop: ([URL]) -> Void {
-        get { textView.onDrop }
-        set { textView.onDrop = newValue }
-    }
-
     override init(frame: NSRect) {
         let layout = NSLayoutManager()
         let container = NSTextContainer(size: NSSize(width: frame.width, height: CGFloat.greatestFiniteMagnitude))
@@ -80,6 +75,7 @@ final class SourceEditor: NSView, NSTextViewDelegate {
         ])
         scrollView.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main) { [weak self] _ in
+            self?.colourVisible()
             self?.lineNumbers.needsDisplay = true
             self?.textView.slashMenuFollows()
             self?.onScroll()
@@ -102,6 +98,9 @@ final class SourceEditor: NSView, NSTextViewDelegate {
         self.document = document
         if layout.textStorage !== storage {
             layout.textStorage?.removeLayoutManager(layout)
+            // A long text is laid out only where it is looked at: laying out all of it above the
+            // place shown takes a second for 2 MB.
+            layout.allowsNonContiguousLayout = storage.length > 300_000
             storage.addLayoutManager(layout)
             textView.setSelectedRange(NSRange(location: 0, length: 0))
             textView.scroll(.zero)
@@ -109,6 +108,17 @@ final class SourceEditor: NSView, NSTextViewDelegate {
         }
         recolour()
         reflectChangeOnDisk()
+    }
+
+    /// A long text is coloured a part at a time (see SourceHighlighter): what is on show, and a
+    /// screen's height either side of it, is coloured before it is drawn.
+    private func colourVisible() {
+        guard let document, let layout = textView.layoutManager, let container = textView.textContainer else { return }
+        let visible = textView.visibleRect
+        guard !visible.isEmpty else { return }
+        let rect = visible.offsetBy(dx: -textView.textContainerOrigin.x, dy: -textView.textContainerOrigin.y).insetBy(dx: 0, dy: -visible.height)
+        let glyphs = layout.glyphRange(forBoundingRect: rect, in: container)
+        document.colourNow(layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil))
     }
 
     /// Lets go of the document on show: its text no longer lays itself out here, and edits made here
@@ -135,11 +145,11 @@ final class SourceEditor: NSView, NSTextViewDelegate {
         textObserver = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil) { [weak self, weak storage] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.lineStarts = nil
-                self.lineNumbers.textChanged()
                 if let storage, storage.editedMask.contains(.editedCharacters) {
+                    self.moveLineStarts(storage.editedRange, changeInLength: storage.changeInLength)
                     self.textView.textEdited(storage.editedRange, changeInLength: storage.changeInLength)
                 }
+                self.lineNumbers.textChanged()
             }
         }
     }
@@ -157,6 +167,32 @@ final class SourceEditor: NSView, NSTextViewDelegate {
         }
         lineStarts = found
         return found
+    }
+
+    /// Moves the line starts along with an edit, rather than finding them all again: in a long text
+    /// that takes longer than the edit.
+    private func moveLineStarts(_ edited: NSRange, changeInLength delta: Int) {
+        guard var starts = lineStarts, let text = textView.textStorage?.mutableString else { return }
+        // The lines that started inside the text replaced go, and those after it move along.
+        func firstStart(after location: Int) -> Int {
+            var low = 0, high = starts.count
+            while low < high {
+                let middle = (low + high) / 2
+                if starts[middle] > location { high = middle } else { low = middle + 1 }
+            }
+            return low
+        }
+        let first = firstStart(after: edited.location), last = firstStart(after: NSMaxRange(edited) - delta)
+        for index in last..<starts.count { starts[index] += delta }
+        var found: [Int] = [], location = edited.location
+        while location < NSMaxRange(edited) {
+            let newline = text.range(of: "\n", options: .literal, range: NSRange(location: location, length: NSMaxRange(edited) - location))
+            guard newline.location != NSNotFound else { break }
+            location = NSMaxRange(newline)
+            found.append(location)
+        }
+        starts.replaceSubrange(first..<last, with: found)
+        lineStarts = starts
     }
 
     /// The line, counting from 0, that holds a character.
@@ -233,6 +269,7 @@ final class SourceEditor: NSView, NSTextViewDelegate {
     private func recolour() {
         guard let document else { return }
         document.apply(editorTheme)
+        colourVisible()
         textView.typingAttributes = document.typingAttributes
         lineNumbers.font = SourceHighlighter.font(editorTheme)
     }

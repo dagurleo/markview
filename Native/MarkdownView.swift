@@ -50,7 +50,11 @@ final class ColumnTextView: NSTextView {
         fitDrawings()
     }
 
+    /// While set, a change of size lays nothing out again (see MarkdownView.keepingWidth).
+    var holdsLayout = false
+
     override func setFrameSize(_ newSize: NSSize) {
+        guard !holdsLayout else { return super.setFrameSize(newSize) }
         let clip = enclosingScrollView?.contentView
         let atTop = (clip?.bounds.origin.y ?? 1) <= 0
         let inset = NSSize(width: max(40, floor((newSize.width - columnWidth) / 2)), height: 24)
@@ -857,6 +861,21 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         storage.beginEditing()
         storage.edited(.editedAttributes, range: NSRange(location: 0, length: storage.length), changeInLength: 0)
         storage.endEditing()
+    }
+
+    /// Runs `body`, which resizes the page, laying out the text again only for the width it ends
+    /// at, not for those it passes through. A long page read far down takes seconds to lay out.
+    func keepingWidth(_ body: () -> Void) {
+        guard let container = textView.textContainer, container.widthTracksTextView else { return body() }
+        container.widthTracksTextView = false
+        textView.holdsLayout = true
+        body()
+        textView.holdsLayout = false
+        container.widthTracksTextView = true
+        // The margins, drawings and tables for the width it ended at, and the column.
+        textView.setFrameSize(textView.frame.size)
+        let width = textView.frame.width - 2 * textView.textContainerInset.width
+        if container.size.width != width { container.size = NSSize(width: width, height: container.size.height) }
     }
 
     // MARK: Moving around

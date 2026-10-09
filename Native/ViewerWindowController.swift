@@ -104,7 +104,6 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         markdownView.magnification = zoom > 0 ? zoom : 1
         markdownView.open = { [weak self] url in self?.open(url) }
         markdownView.openDropped = { [weak self] url in self?.openDropped(url) }
-        editor.onDrop = { [weak self] files in files.forEach { self?.openDropped($0) } }
         markdownView.willFollowLink = { [weak self] in self?.leaving() }
         markdownView.onPreview = { [weak self] file, frame in self?.showPreview(of: file, from: frame) }
         markdownView.onScroll = { [weak self] in
@@ -120,6 +119,8 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
             outline.show(markdownView.headings)
             markCurrentHeading()
             if editorAwaitsPage {
+                // Text rendered before the editor opened does not tell where its blocks are written.
+                guard markdownView.knowsSourceLines else { return }
                 editorAwaitsPage = false
                 editorFollowsPage()
             } else {
@@ -282,18 +283,20 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
             let width = CGFloat(UserDefaults.standard.double(forKey: "editorWidth")).clamped(to: 280...1200, default: 560)
             var frame = window.frame
             let room = width + editorDivider.dividerThickness
-            if !window.styleMask.contains(.fullScreen), let screen = (window.screen ?? NSScreen.main)?.visibleFrame,
-               frame.width + room <= screen.width {
-                frame.size.width += room
-                frame.origin.x = max(screen.minX, min(frame.origin.x, screen.maxX - frame.width))
-                roomForEditor = room
-                // The viewer's size, not the editor's, is the one new windows open at.
-                windowFrameAutosaveName = ""
-                window.setFrame(frame, display: true)
+            markdownView.keepingWidth {
+                if !window.styleMask.contains(.fullScreen), let screen = (window.screen ?? NSScreen.main)?.visibleFrame,
+                   frame.width + room <= screen.width {
+                    frame.size.width += room
+                    frame.origin.x = max(screen.minX, min(frame.origin.x, screen.maxX - frame.width))
+                    roomForEditor = room
+                    // The viewer's size, not the editor's, is the one new windows open at.
+                    windowFrameAutosaveName = ""
+                    window.setFrame(frame, display: false)
+                }
+                editorItem.isCollapsed = false
+                let available = editorSplit.splitView.bounds.width
+                editorSplit.splitView.setPosition(roomForEditor != nil ? width : min(width, floor(available / 2)), ofDividerAt: 0)
             }
-            editorItem.isCollapsed = false
-            let available = editorSplit.splitView.bounds.width
-            editorSplit.splitView.setPosition(roomForEditor != nil ? width : min(width, floor(available / 2)), ofDividerAt: 0)
             window.makeFirstResponder(editor.textView)
             reflectChangeOnDisk()
         } else {
@@ -302,13 +305,15 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
             if let responder = window.firstResponder as? NSView, responder.isDescendant(of: editor) {
                 window.makeFirstResponder(markdownView.textView)
             }
-            editorItem.isCollapsed = true
             markdownView.tracksSource = false
-            if roomForEditor != nil, !window.styleMask.contains(.fullScreen) {
-                var frame = window.frame
-                frame.size.width = max(window.minSize.width, frame.width - width - editorDivider.dividerThickness)
-                window.setFrame(frame, display: true)
-                if !scripted { windowFrameAutosaveName = "Viewer" }
+            markdownView.keepingWidth {
+                editorItem.isCollapsed = true
+                if roomForEditor != nil, !window.styleMask.contains(.fullScreen) {
+                    var frame = window.frame
+                    frame.size.width = max(window.minSize.width, frame.width - width - editorDivider.dividerThickness)
+                    window.setFrame(frame, display: false)
+                    if !scripted { windowFrameAutosaveName = "Viewer" }
+                }
             }
             roomForEditor = nil
         }

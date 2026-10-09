@@ -16,7 +16,7 @@ brew install --cask dagurleo/tap/markview
 or download `Markview-<version>.dmg` from [Releases](https://github.com/dagurleo/markview/releases)
 and drag Markview to Applications. It is signed and notarized, and runs on macOS 14
 or later. Open it once so that macOS picks up its Quick Look preview; "Make Default
-Markdown Viewer" in the Markview menu has Markdown files open in it.
+Markdown App" in the Markview menu has Markdown files open in it.
 
 `markview README.md` opens files from a terminal, `markview docs` a folder, and
 `some-command | markview` shows what is piped in. The Homebrew cask puts the command on the PATH; otherwise link it:
@@ -53,8 +53,8 @@ Markview menu checks at any time. Version 0.1.0 predates this and is updated by 
   mark are read correctly.
 - Keeps documents harmless. Links to other Markdown files open in Markview, web
   links go to the browser, and any other local file is only revealed in Finder,
-  so a document can never launch an app or run a script. Files dropped on a
-  window follow the same rules.
+  so a document can never launch an app or run a script. Files dropped on the
+  page follow the same rules.
 - Browses like a browser: a link to another Markdown file opens in the same window
   (⌘-click for a new one), and Go > Back and Forward (⌘[ ⌘], or a mouse's side
   buttons) return to the exact place left, also after following a link to a heading
@@ -94,8 +94,10 @@ Markview menu checks at any time. Version 0.1.0 predates this and is updated by 
   inserts, and Escape leaves what you typed. The first place to fill in is selected, and
   Tab goes on to the next. In a table, Tab and ⇧Tab go from cell to cell and Return
   starts a row, lining the columns up; Tab on a line like `| Name | Age |` makes it a
-  table. Pasting an address over selected text makes it a link. Settings > Editor can
-  turn the slash menu off.
+  table. Pasting an address over selected text makes it a link, and a file dropped on
+  the editor, or pasted after copying it in the Finder, goes in as a link to it, from
+  the document's folder; a picture goes in as a picture. Settings > Editor can turn the
+  slash menu off.
 - A sidebar beside the page (View > Show Sidebar, ⌃⌘S) with the document's headings,
   marking the section being read; clicking a heading goes to it.
 - Opens folders too (File > Open…, the `markview` command, or a folder dropped on the
@@ -109,10 +111,11 @@ Markview menu checks at any time. Version 0.1.0 predates this and is updated by 
 - Find (⌘F), zoom (⌘+ ⌘- ⌘0), a Go menu listing the headings, with Next and Previous
   Heading (⌥⌘↓ ⌥⌘↑),
   Print (⌘P) and Export as PDF (⇧⌘E), Open With, Reveal in Finder (⇧⌘R), Copy
-  Path (⌥⌘C), Open Recent, and "Make Default Markdown Viewer" in the app menu.
+  Path (⌥⌘C), Open Recent, and "Make Default Markdown App" in the app menu.
   Markdown files show Markview's document icon once it is the default app.
 - Large files show their beginning at once and finish rendering in the
-  background.
+  background. The editor opens at once on them too: it colours what is on show first
+  and the rest between keystrokes.
 
 ## Limitations
 
