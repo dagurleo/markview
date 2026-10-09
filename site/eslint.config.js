@@ -15,6 +15,6 @@ export default [
     },
   },
   {
-    ignores: ["eslint.config.js", ".prettierrc", "moodboard/**", "dist/**", ".wrangler/**", ".tanstack/**"],
+    ignores: ["eslint.config.js", ".prettierrc", "dist/**", ".wrangler/**", ".tanstack/**"],
   },
 ]

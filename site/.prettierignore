@@ -2,7 +2,6 @@ package-lock.json
 pnpm-lock.yaml
 yarn.lock
 src/routeTree.gen.ts
-moodboard
 .wrangler
 .tanstack
 dist

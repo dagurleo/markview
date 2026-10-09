@@ -27,7 +27,6 @@ bun run deploy    # builds, then runs wrangler deploy
 - `public/shots` holds the screenshots. `shots/shoot.sh` takes them with the app's snapshot hooks
   (build the app first); the documents they show are in `shots/`. It passes every setting as a
   launch argument, so your own settings are neither used nor changed.
-- `moodboard/` is the first mood board, as an HTML page. The current one is in Cork.
 
 ## Deploying
 
