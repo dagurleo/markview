@@ -18,5 +18,5 @@ protocol DocumentOutline: AnyObject {
 @objc protocol DocumentActions {
     func printDocument(_ sender: Any?)
     func exportPDF(_ sender: Any?)
-    func toggleSource(_ sender: Any?)
+    func toggleEditor(_ sender: Any?)
 }

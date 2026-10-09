@@ -112,6 +112,13 @@ final class DocumentController: NSDocumentController {
         return super.runModalOpenPanel(openPanel, forTypes: types)
     }
 
+    /// A new document made from a folder's window is saved there, and finds its pictures there meanwhile.
+    override func makeUntitledDocument(ofType typeName: String) throws -> NSDocument {
+        let document = try super.makeUntitledDocument(ofType: typeName)
+        (document as? MarkdownDocument)?.draftFolder = (NSApp.mainWindow?.windowController as? ViewerWindowController)?.root
+        return document
+    }
+
     override func openDocument(withContentsOf url: URL, display displayDocument: Bool,
                                completionHandler: @escaping (NSDocument?, Bool, (any Error)?) -> Void) {
         guard Folders.isFolder(url) else { return super.openDocument(withContentsOf: url, display: displayDocument, completionHandler: completionHandler) }

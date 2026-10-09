@@ -18,6 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = makeMainMenu()
+        // Unsaved edits are kept in the system's autosave folder every few seconds, and come back
+        // after a crash; a document's own file is written only when it is saved.
+        NSDocumentController.shared.autosavingDelay = 5
         shownAppearance = Settings.defaults.string(forKey: Settings.Key.appearance)
         NSApp.appearance = Settings.appearance
         NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged), name: UserDefaults.didChangeNotification, object: nil)
@@ -25,13 +28,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
-    // A viewer has no untitled documents: launching without a file asks for one.
+    // Launching without a file asks for one, rather than starting a new document (File > New).
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { true }
 
     func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
         let controller = NSDocumentController.shared
         controller.beginOpenPanel { urls in
-            guard let urls, !urls.isEmpty else { return NSApp.terminate(nil) }
+            guard let urls, !urls.isEmpty else {
+                // Unless a new document was started meanwhile.
+                if controller.documents.isEmpty { NSApp.terminate(nil) }
+                return
+            }
             urls.forEach(Self.open)
         }
         return true
@@ -105,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         app.add("Quit Markview", #selector(NSApplication.terminate(_:)), key: "q")
 
         let file = submenu("File")
+        file.add("New", #selector(NSDocumentController.newDocument(_:)), key: "n")
         file.add("Open…", #selector(NSDocumentController.openDocument(_:)), key: "o")
         let recent = NSMenu(title: "Open Recent")
         recent.delegate = self
@@ -117,18 +125,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         file.add("Copy Path", #selector(copyPath(_:)), key: "c", modifiers: [.command, .option]).target = self
         file.addItem(.separator())
         file.add("Close", #selector(NSWindow.performClose(_:)), key: "w")
+        file.add("Save", #selector(NSDocument.save(_:)), key: "s")
+        file.add("Save As…", #selector(NSDocument.saveAs(_:)), key: "s", modifiers: [.command, .shift])
+        file.add("Revert to Saved", #selector(NSDocument.revertToSaved(_:)))
         file.addItem(.separator())
-        // Printing and the source view belong to the document window.
+        // Printing and the editor belong to the document window.
         file.add("Export as PDF…", #selector(DocumentActions.exportPDF(_:)), key: "e", modifiers: [.command, .shift])
         file.add("Print…", #selector(DocumentActions.printDocument(_:)), key: "p")
 
         let edit = submenu("Edit")
+        edit.add("Undo", Selector(("undo:")), key: "z")
+        edit.add("Redo", Selector(("redo:")), key: "z", modifiers: [.command, .shift])
+        edit.addItem(.separator())
+        edit.add("Cut", #selector(NSText.cut(_:)), key: "x")
         edit.add("Copy", #selector(NSText.copy(_:)), key: "c")
+        edit.add("Paste", #selector(NSText.paste(_:)), key: "v")
+        edit.add("Delete", #selector(NSText.delete(_:)))
         edit.add("Select All", #selector(NSText.selectAll(_:)), key: "a")
         edit.addItem(.separator())
         edit.add("Find…", #selector(ViewerWindowController.showFindBar(_:)), key: "f")
+        edit.add("Find and Replace…", #selector(ViewerWindowController.showReplaceBar(_:)), key: "f", modifiers: [.command, .option])
         edit.add("Find Next", #selector(ViewerWindowController.findNext(_:)), key: "g")
         edit.add("Find Previous", #selector(ViewerWindowController.findPrevious(_:)), key: "g", modifiers: [.command, .shift])
+        edit.addItem(.separator())
+        let spelling = NSMenu(title: "Spelling and Grammar")
+        spelling.add("Show Spelling and Grammar", #selector(NSText.showGuessPanel(_:)), key: ":")
+        spelling.add("Check Document Now", #selector(NSText.checkSpelling(_:)), key: ";")
+        spelling.addItem(.separator())
+        spelling.add("Check Spelling While Typing", #selector(NSTextView.toggleContinuousSpellChecking(_:)))
+        spelling.add("Check Grammar With Spelling", #selector(NSTextView.toggleGrammarChecking(_:)))
+        spelling.add("Correct Spelling Automatically", #selector(NSTextView.toggleAutomaticSpellingCorrection(_:)))
+        edit.add("Spelling and Grammar", nil).submenu = spelling
+        let substitutions = NSMenu(title: "Substitutions")
+        substitutions.add("Show Substitutions", #selector(NSTextView.orderFrontSubstitutionsPanel(_:)))
+        substitutions.addItem(.separator())
+        substitutions.add("Smart Quotes", #selector(NSTextView.toggleAutomaticQuoteSubstitution(_:)))
+        substitutions.add("Smart Dashes", #selector(NSTextView.toggleAutomaticDashSubstitution(_:)))
+        substitutions.add("Text Replacement", #selector(NSTextView.toggleAutomaticTextReplacement(_:)))
+        edit.add("Substitutions", nil).submenu = substitutions
 
         let view = submenu("View")
         view.add("Show Sidebar", #selector(ViewerWindowController.toggleOutline(_:)), key: "s", modifiers: [.command, .control])
@@ -137,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         view.add("Zoom In", #selector(ViewerWindowController.zoomPageIn(_:)), key: "+")
         view.add("Zoom Out", #selector(ViewerWindowController.zoomPageOut(_:)), key: "-")
         view.addItem(.separator())
-        view.add("View Source", #selector(DocumentActions.toggleSource(_:)), key: "u")
+        view.add("Show Editor", #selector(DocumentActions.toggleEditor(_:)), key: "u")
         view.addItem(.separator())
         view.add("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), key: "f", modifiers: [.command, .control])
 

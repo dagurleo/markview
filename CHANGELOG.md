@@ -1,5 +1,18 @@
 # Changes
 
+## 0.5.0 (not released yet)
+
+- An editor beside the page: View > Show Editor (⌘U) opens the Markdown as written,
+  coloured in the theme, and the page follows a moment after you stop typing. Documents
+  still open as pages to read. File > New (⌘N) starts a new document, with the editor
+  open. Save (⌘S), Save As… and Revert to Saved write the file only when asked; unsaved
+  edits are kept aside every few seconds and come back after a crash, and a file is
+  written back in the encoding, byte order mark and line endings it had. If another app
+  changes the file under unsaved edits, a bar above the editor asks which to keep.
+  Following a link or going back from unsaved edits asks first. View Source is gone; the
+  editor shows the same.
+- A short file in Latin-1 is no longer read as UTF-8 with its accented letters replaced.
+
 ## 0.4.0
 
 - Folders open too, from File > Open…, the `markview` command, or by dropping one on the

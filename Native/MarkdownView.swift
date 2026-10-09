@@ -673,15 +673,27 @@ final class MarkdownView: NSScrollView, NSTextViewDelegate {
         }
     }
 
-    /// Shows the document's Markdown as written, in place of the rendered page.
-    func showSource(_ markdown: String) {
+    /// Shows the document again as it is being edited. It renders in the background whatever its
+    /// size, so typing never waits for it, and is swapped in keeping the place; one overtaken by a
+    /// later edit is skipped.
+    func update(_ markdown: String, baseURL: URL) {
+        self.baseURL = baseURL
         generation += 1
+        let generation = generation
+        let theme = theme
+        // This also takes the place of a large document still being rendered in full.
         rendering = false
-        let style = NSMutableParagraphStyle()
-        style.lineHeightMultiple = 1.25
-        let text = NSAttributedString(string: markdown, attributes: [
-            .font: theme.font(size: theme.scaled(13), mono: true), .foregroundColor: theme.text, .paragraphStyle: style])
-        replaceText(with: text, from: nil, keepingPlace: false)
+        pendingAnchor = nil
+        pendingPlace = nil
+        renderQueue.async {
+            guard DispatchQueue.main.sync(execute: { generation == self.generation }) else { return }
+            let renderer = NativeRenderer(baseURL: baseURL, theme: theme)
+            let rendered = renderer.render(markdown)
+            DispatchQueue.main.async {
+                guard generation == self.generation else { return }
+                self.replaceText(with: rendered, from: renderer, keepingPlace: true)
+            }
+        }
     }
 
     /// The character at the top of the view, or `offset` points below it, or 0 at the top of the document.

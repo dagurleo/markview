@@ -16,7 +16,18 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     /// Scripted checks show no outline, unless asked, and leave its setting alone.
     private let scripted = ProcessInfo.processInfo.environment["MARKVIEW_SNAPSHOT"] != nil
     private var didRunSmokeTestHooks = false
-    private var showingSource = false
+    /// The Markdown as written, beside the page, for editing (View > Show Editor). Every window opens
+    /// without it but a new document's.
+    private let editor = SourceEditor(frame: NSRect(x: 0, y: 0, width: 560, height: 600))
+    private let editorItem: NSSplitViewItem
+    private let editorSplit: NSSplitViewController
+    private let editorDivider = OutlineSplitView()
+    /// How much wider the window grew to make room for the editor, given back when it closes.
+    private var roomForEditor: CGFloat?
+    /// The page follows the editor once typing pauses.
+    private var pendingUpdate: DispatchWorkItem?
+    /// What to do once the reader has said what becomes of unsaved edits in the document left.
+    private var pendingLeave: (() -> Void)?
     /// Scripted checks open documents at the top and leave the places alone, unless asked.
     private let keepsPlace = ProcessInfo.processInfo.environment["MARKVIEW_SNAPSHOT"] == nil
         || ProcessInfo.processInfo.environment["MARKVIEW_KEEP_PLACE"] != nil
@@ -51,12 +62,30 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         outlineItem.minimumThickness = 150
         outlineItem.maximumThickness = 400
         outlineItem.holdingPriority = NSLayoutConstraint.Priority(260)
+        // Beside the outline, the editor and the page, side by side in a split of their own; the
+        // page takes up a change in the window's width.
+        editorSplit = NSSplitViewController()
+        editorDivider.isVertical = true
+        editorDivider.dividerStyle = .thin
+        editorDivider.color = markdownView.theme.border
+        editorSplit.splitView = editorDivider
+        let source = NSViewController()
+        source.view = editor
+        editorItem = NSSplitViewItem(viewController: source)
+        editorItem.canCollapse = true
+        editorItem.minimumThickness = 280
+        editorItem.holdingPriority = NSLayoutConstraint.Priority(255)
+        editorItem.isCollapsed = true
         let page = NSViewController()
         page.view = markdownView
         let pageItem = NSSplitViewItem(viewController: page)
         pageItem.minimumThickness = 280
+        editorSplit.addSplitViewItem(editorItem)
+        editorSplit.addSplitViewItem(pageItem)
+        let contentItem = NSSplitViewItem(viewController: editorSplit)
+        contentItem.minimumThickness = 280
         split.addSplitViewItem(outlineItem)
-        split.addSplitViewItem(pageItem)
+        split.addSplitViewItem(contentItem)
         split.view.frame = frame
         if !scripted { divider.autosaveName = "Outline" }
         outlineItem.isCollapsed = scripted ? ProcessInfo.processInfo.environment["MARKVIEW_OUTLINE"] == nil
@@ -70,6 +99,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         markdownView.magnification = zoom > 0 ? zoom : 1
         markdownView.open = { [weak self] url in self?.open(url) }
         markdownView.openDropped = { [weak self] url in self?.openDropped(url) }
+        editor.onDrop = { [weak self] files in files.forEach { self?.openDropped($0) } }
         markdownView.willFollowLink = { [weak self] in self?.leaving() }
         markdownView.onPreview = { [weak self] file, frame in self?.showPreview(of: file, from: frame) }
         markdownView.onScroll = { [weak self] in
@@ -82,9 +112,11 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
             markCurrentHeading()
         }
         sidebar.files.onSelect = { [weak self] file in
-            guard let self else { return }
-            leaving()
-            show(file) { [weak self] _ in self?.window?.makeFirstResponder(self?.markdownView.textView) }
+            self?.leavingDocument(for: file) { [weak self] in
+                guard let self else { return }
+                leaving()
+                show(file) { [weak self] _ in self?.window?.makeFirstResponder(self?.markdownView.textView) }
+            }
         }
         outline.onSelect = { [weak self] heading in
             guard let self, let index = headings.firstIndex(where: { $0.anchor == heading.anchor }) else { return }
@@ -95,6 +127,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         windowFrameAutosaveName = "Viewer"
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
             self?.rememberPlace()
+            self?.editor.leave()
         }
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             self?.rememberPlace()
@@ -106,6 +139,12 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
 
     override var document: AnyObject? {
         didSet {
+            // The editor, if open, goes on to the document the window moves on to.
+            if let document = document as? MarkdownDocument {
+                if !editorItem.isCollapsed { editor.show(document) }
+            } else {
+                editor.leave()
+            }
             render()
             sidebar.files.current = (document as? NSDocument)?.fileURL
             // A #heading the document was opened at comes after this, and wins. A document the
@@ -124,6 +163,8 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         window?.backgroundColor = theme.background
         sidebar.apply(theme)
         divider.color = theme.border
+        editorDivider.color = theme.border
+        editor.apply(theme)
         render()
     }
 
@@ -193,12 +234,132 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     }
 
     func render() {
-        guard let document = document as? MarkdownDocument, let file = document.fileURL else { return }
-        if showingSource {
-            markdownView.showSource(document.markdown)
+        guard let document = document as? MarkdownDocument, let baseURL else { return }
+        markdownView.show(document.markdown, baseURL: baseURL)
+    }
+
+    /// Where the document's pictures and links are found from: its file, or for a new one not yet
+    /// saved, the folder it was made from.
+    private var baseURL: URL? {
+        guard let document = document as? MarkdownDocument else { return nil }
+        if let file = document.fileURL { return file }
+        let folder = document.draftFolder ?? root ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        return folder.appendingPathComponent("Untitled.md")
+    }
+
+    // MARK: Editor
+
+    /// Opens the editor beside the page, or closes it. The window widens to make room for it if the
+    /// screen has room, so the page keeps its width, and narrows again when it closes; otherwise
+    /// the two share the window.
+    @objc func toggleEditor(_ sender: Any?) {
+        guard let window, let document = document as? MarkdownDocument else { return }
+        let place = markdownView.place
+        if editorItem.isCollapsed {
+            editor.show(document)
+            let width = CGFloat(UserDefaults.standard.double(forKey: "editorWidth")).clamped(to: 280...1200, default: 560)
+            var frame = window.frame
+            let room = width + editorDivider.dividerThickness
+            if !window.styleMask.contains(.fullScreen), let screen = (window.screen ?? NSScreen.main)?.visibleFrame,
+               frame.width + room <= screen.width {
+                frame.size.width += room
+                frame.origin.x = max(screen.minX, min(frame.origin.x, screen.maxX - frame.width))
+                roomForEditor = room
+                // The viewer's size, not the editor's, is the one new windows open at.
+                windowFrameAutosaveName = ""
+                window.setFrame(frame, display: true)
+            }
+            editorItem.isCollapsed = false
+            let available = editorSplit.splitView.bounds.width
+            editorSplit.splitView.setPosition(roomForEditor != nil ? width : min(width, floor(available / 2)), ofDividerAt: 0)
+            window.makeFirstResponder(editor.textView)
+            reflectChangeOnDisk()
         } else {
-            markdownView.show(document.markdown, baseURL: file)
+            let width = editor.frame.width
+            if !scripted { UserDefaults.standard.set(Double(width), forKey: "editorWidth") }
+            if let responder = window.firstResponder as? NSView, responder.isDescendant(of: editor) {
+                window.makeFirstResponder(markdownView.textView)
+            }
+            editorItem.isCollapsed = true
+            if roomForEditor != nil, !window.styleMask.contains(.fullScreen) {
+                var frame = window.frame
+                frame.size.width = max(window.minSize.width, frame.width - width - editorDivider.dividerThickness)
+                window.setFrame(frame, display: true)
+                if !scripted { windowFrameAutosaveName = "Viewer" }
+            }
+            roomForEditor = nil
         }
+        invalidateRestorableState()
+        // The page narrows or widens and its lines rewrap; the place in it is kept by its character.
+        DispatchQueue.main.async { [self] in
+            if place > 0 { markdownView.go(to: place) } else { markdownView.contentView.scroll(to: .zero) }
+            markCurrentHeading()
+        }
+    }
+
+    // A window put back after a relaunch opens without the editor, so it gives back the room it had
+    // made for it.
+    override func encodeRestorableState(with coder: NSCoder) {
+        super.encodeRestorableState(with: coder)
+        coder.encode(Double(roomForEditor ?? 0), forKey: "roomForEditor")
+    }
+
+    override func restoreState(with coder: NSCoder) {
+        super.restoreState(with: coder)
+        let room = CGFloat(coder.decodeDouble(forKey: "roomForEditor"))
+        guard room > 0, editorItem.isCollapsed, let window else { return }
+        var frame = window.frame
+        frame.size.width = max(window.minSize.width, frame.width - room)
+        window.setFrame(frame, display: true)
+    }
+
+    /// Opens the editor, as for a new document, if it is not open already.
+    func showEditor() {
+        if editorItem.isCollapsed { toggleEditor(nil) }
+    }
+
+    /// The text changed in an editor, or was read again from disk. The page follows once typing
+    /// pauses: longer documents take longer to render, so they wait for a longer pause.
+    func textChanged() {
+        pendingUpdate?.cancel()
+        let length = (document as? MarkdownDocument)?.length ?? 0
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let document = document as? MarkdownDocument, let baseURL else { return }
+            markdownView.update(document.markdown, baseURL: baseURL)
+        }
+        pendingUpdate = work
+        let pause = length < 50_000 ? 0.15 : length < 250_000 ? 0.4 : length < 1_000_000 ? 1 : 3
+        DispatchQueue.main.asyncAfter(deadline: .now() + pause, execute: work)
+    }
+
+    /// The document was saved under a name, or its file renamed or moved.
+    func documentMoved() {
+        sidebar.files.current = (document as? NSDocument)?.fileURL
+        editor.reflectChangeOnDisk()
+        textChanged()
+    }
+
+    /// The file changed on disk under unsaved edits, or that was settled: the editor shows which to
+    /// keep while it is not.
+    func reflectChangeOnDisk() {
+        if (document as? MarkdownDocument)?.changedOnDisk == true, editorItem.isCollapsed { return toggleEditor(nil) }
+        editor.reflectChangeOnDisk()
+    }
+
+    /// Runs `body`, which moves the window to `file`, once the document on show can be left. Leaving
+    /// closes it if no other window shows it, so with unsaved edits the reader is asked first
+    /// whether to save them; nothing happens if they cancel.
+    private func leavingDocument(for file: URL, _ body: @escaping () -> Void) {
+        guard let current = document as? NSDocument, current.fileURL?.standardizedFileURL != file.standardizedFileURL,
+              current.isDocumentEdited, current.windowControllers.count == 1 else { return body() }
+        pendingLeave = body
+        current.canClose(withDelegate: self, shouldClose: #selector(document(_:shouldClose:contextInfo:)), contextInfo: nil)
+    }
+
+    @objc private func document(_ document: NSDocument, shouldClose: Bool, contextInfo: UnsafeMutableRawPointer?) {
+        let body = pendingLeave
+        pendingLeave = nil
+        if shouldClose { body?() }
     }
 
     // MARK: Pictures full size
@@ -241,22 +402,15 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
-    /// Not while the source shows, whose characters are not the page's, nor while a large
-    /// document is still on its way to the place it opens at.
+    /// Not while a large document is still on its way to the place it opens at.
     private func rememberPlace() {
-        guard keepsPlace, !showingSource, !markdownView.rendering, let file = (document as? NSDocument)?.fileURL else { return }
+        guard keepsPlace, !markdownView.rendering, let file = (document as? NSDocument)?.fileURL else { return }
         Places.remember(markdownView.place, of: file)
     }
 
-    // MARK: Source
-
-    @objc func toggleSource(_ sender: Any?) {
-        showingSource.toggle()
-        render()
-    }
-
     @objc func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        if item.action == #selector(toggleSource(_:)) { item.state = showingSource ? .on : .off }
+        if item.action == #selector(toggleEditor(_:)) { item.title = editorItem.isCollapsed ? "Show Editor" : "Hide Editor" }
+        if item.action == #selector(showReplaceBar(_:)) { return document != nil }
         if item.action == #selector(toggleOutline(_:)) { item.title = outlineItem.isCollapsed ? "Show Sidebar" : "Hide Sidebar" }
         if item.action == #selector(goToNextHeading(_:)) || item.action == #selector(goToPreviousHeading(_:)) { return !headings.isEmpty }
         if item.action == #selector(goBack(_:)) { return !backStops.isEmpty }
@@ -377,7 +531,7 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     private var backStops: [Stop] = [], forwardStops: [Stop] = []
 
     private var here: Stop? {
-        (document as? NSDocument)?.fileURL.map { Stop(file: $0, place: showingSource ? 0 : markdownView.place) }
+        (document as? NSDocument)?.fileURL.map { Stop(file: $0, place: markdownView.place) }
     }
 
     /// Before a link is followed or a heading chosen: the place left goes on the back list.
@@ -389,22 +543,30 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     }
 
     private func follow(_ file: URL, to fragment: String?) {
-        leaving()
-        show(file) { [weak self] sameDocument in
-            if let fragment { self?.markdownView.jump(to: fragment) } else if sameDocument { self?.markdownView.go(to: 0) }
+        leavingDocument(for: file) { [weak self] in
+            self?.leaving()
+            self?.show(file) { [weak self] sameDocument in
+                if let fragment { self?.markdownView.jump(to: fragment) } else if sameDocument { self?.markdownView.go(to: 0) }
+            }
         }
     }
 
     @objc func goBack(_ sender: Any?) {
-        guard let stop = backStops.popLast() else { return NSSound.beep() }
-        if let here { forwardStops.append(here) }
-        show(stop.file) { [weak self] _ in self?.markdownView.go(to: stop.place) }
+        guard let next = backStops.last else { return NSSound.beep() }
+        leavingDocument(for: next.file) { [weak self] in
+            guard let self, let stop = backStops.popLast() else { return }
+            if let here { forwardStops.append(here) }
+            show(stop.file) { [weak self] _ in self?.markdownView.go(to: stop.place) }
+        }
     }
 
     @objc func goForward(_ sender: Any?) {
-        guard let stop = forwardStops.popLast() else { return NSSound.beep() }
-        if let here { backStops.append(here) }
-        show(stop.file) { [weak self] _ in self?.markdownView.go(to: stop.place) }
+        guard let next = forwardStops.last else { return NSSound.beep() }
+        leavingDocument(for: next.file) { [weak self] in
+            guard let self, let stop = forwardStops.popLast() else { return }
+            if let here { backStops.append(here) }
+            show(stop.file) { [weak self] _ in self?.markdownView.go(to: stop.place) }
+        }
     }
 
     // A mouse's back and forward buttons do the same.
@@ -428,7 +590,6 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
                 return
             }
             rememberPlace()
-            showingSource = false
             let previous = document as? NSDocument
             previous?.removeWindowController(self)
             opened.addWindowController(self)
@@ -450,15 +611,24 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
 
     // MARK: Find
 
-    // The text view brings its own find bar; these only tell it what to do.
+    // Each text view brings its own find bar; these only tell the one in use what to do: the
+    // editor's while it has the focus, otherwise the page's.
     @objc func showFindBar(_ sender: Any?) { find(.showFindInterface) }
     @objc func findNext(_ sender: Any?) { find(.nextMatch) }
     @objc func findPrevious(_ sender: Any?) { find(.previousMatch) }
 
+    /// Replacing is the editor's: it opens if need be.
+    @objc func showReplaceBar(_ sender: Any?) {
+        showEditor()
+        window?.makeFirstResponder(editor.textView)
+        find(.showReplaceInterface)
+    }
+
     private func find(_ action: NSTextFinder.Action) {
         let item = NSMenuItem()
         item.tag = action.rawValue
-        markdownView.textView.performTextFinderAction(item)
+        let editing = !editorItem.isCollapsed && (window?.firstResponder as? NSView)?.isDescendant(of: editor) == true
+        (editing ? editor.textView : markdownView.textView).performTextFinderAction(item)
     }
 
     // MARK: Smoke tests
@@ -472,7 +642,8 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
     ///   MARKVIEW_FIND=<text>                 run a find
     ///   MARKVIEW_ANCHOR=<heading slug>       jump to a heading
     ///   MARKVIEW_LINK=<text>                 follow the first link whose target contains the text
-    ///   MARKVIEW_SOURCE=1                    show the source instead of the page
+    ///   MARKVIEW_EDITOR=1                    open the editor beside the page
+    ///   MARKVIEW_TYPE=<text>                 type the text at the start of the document, in the editor
     ///   MARKVIEW_PDF=<pdf path>              also export the page as a PDF
     ///   MARKVIEW_SETTINGS=<png path>         also capture the Settings window
     ///   MARKVIEW_SETTINGS_PANE=<n>           on its nth pane, counting from 0
@@ -489,7 +660,11 @@ final class ViewerWindowController: NSWindowController, DocumentOutline, Documen
             windowFrameAutosaveName = ""
             window.setContentSize(NSSize(width: width, height: window.contentLayoutRect.height))
         }
-        if environment["MARKVIEW_SOURCE"] != nil { toggleSource(nil) }
+        if environment["MARKVIEW_EDITOR"] != nil || environment["MARKVIEW_TYPE"] != nil { showEditor() }
+        if let text = environment["MARKVIEW_TYPE"] {
+            editor.textView.setSelectedRange(NSRange(location: 0, length: 0))
+            editor.textView.insertText(text.replacingOccurrences(of: "\\n", with: "\n"), replacementRange: NSRange(location: 0, length: 0))
+        }
         var settings: NSWindow?
         if environment["MARKVIEW_SETTINGS"] != nil {
             NSApp.sendAction(Selector(("showSettings:")), to: nil, from: nil)
@@ -555,4 +730,11 @@ extension ViewerWindowController: QLPreviewPanelDataSource, QLPreviewPanelDelega
 
     // The panel zooms out of the picture on the page, and back into it.
     func previewPanel(_ panel: QLPreviewPanel!, sourceFrameOnScreenFor item: (any QLPreviewItem)!) -> NSRect { preview?.frame ?? .zero }
+}
+
+private extension CGFloat {
+    /// A setting read from the defaults, which give 0 for one never set.
+    func clamped(to range: ClosedRange<CGFloat>, default fallback: CGFloat) -> CGFloat {
+        self == 0 ? fallback : Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
+    }
 }

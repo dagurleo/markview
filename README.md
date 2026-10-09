@@ -1,8 +1,9 @@
 # Markview
 
-A small native macOS viewer for Markdown. Open a `.md` file and it is shown as a
-read-only page that follows the file as it changes on disk. Press Space on a
-Markdown file in Finder and the same renderer draws the Quick Look preview.
+A small native macOS viewer and editor for Markdown. Open a `.md` file and it is shown
+as a page that follows the file as it changes on disk; press ⌘U to write it in an
+editor beside the page, which keeps up as you type. Press Space on a Markdown file in
+Finder and the same renderer draws the Quick Look preview.
 
 ![Markview showing its sample document, with a search under way](sample/screenshot.png)
 
@@ -67,6 +68,16 @@ Markview menu checks at any time. Version 0.1.0 predates this and is updated by 
   Quick Look previews follow them too. Printing and PDFs use the theme's light colours.
 - Quick Look preview through an app extension. Links in the preview go through a
   small XPC helper because the extension's sandbox cannot open them itself.
+- Edits beside the page (View > Show Editor, ⌘U): the Markdown as written, coloured in
+  the theme, with the page following a moment after you stop typing. Documents always
+  open as pages to read; the window widens to make room for the editor when the screen
+  has it. File > New (⌘N) starts a document with the editor open. Saving is yours to do
+  (⌘S, Save As…, Revert to Saved): unsaved edits are kept aside every few seconds and
+  come back after a crash, but the file itself is only written when you save, in the
+  encoding, byte order mark and line endings it had. If another app changes the file
+  while it has unsaved edits, a bar above the editor asks which to keep. Find and
+  Replace (⌥⌘F), spelling (which leaves code, addresses and tags alone) and undo work as
+  in any Mac editor.
 - A sidebar beside the page (View > Show Sidebar, ⌃⌘S) with the document's headings,
   marking the section being read; clicking a heading goes to it.
 - Opens folders too (File > Open…, the `markview` command, or a folder dropped on the
@@ -78,7 +89,7 @@ Markview menu checks at any time. Version 0.1.0 predates this and is updated by 
   puts a copy button on code blocks, and offers "Copy Link to Heading" in a heading's
   context menu (as `file.md#heading`, the way Markdown links to it).
 - Find (⌘F), zoom (⌘+ ⌘- ⌘0), a Go menu listing the headings, with Next and Previous
-  Heading (⌥⌘↓ ⌥⌘↑), View Source (⌘U),
+  Heading (⌥⌘↓ ⌥⌘↑),
   Print (⌘P) and Export as PDF (⇧⌘E), Open With, Reveal in Finder (⇧⌘R), Copy
   Path (⌥⌘C), Open Recent, and "Make Default Markdown Viewer" in the app menu.
   Markdown files show Markview's document icon once it is the default app.
@@ -190,7 +201,8 @@ no outline and leave both settings alone, unless `MARKVIEW_KEEP_PLACE=1` or
 captures the whole window, `MARKVIEW_APPEARANCE=light|dark` overrides the
 appearance, `MARKVIEW_FIND=<text>` runs a find, `MARKVIEW_ANCHOR=<slug>` jumps to a
 heading, `MARKVIEW_LINK=<text>` follows the first link containing the text,
-`MARKVIEW_SOURCE=1` shows the source instead of the page, `MARKVIEW_PDF=<path>`
+`MARKVIEW_EDITOR=1` opens the editor beside the page, `MARKVIEW_TYPE=<text>` types the
+text at the start of the document in it (`\n` for a new line), `MARKVIEW_PDF=<path>`
 also exports the page as a PDF, `MARKVIEW_WIDTH=<points>` narrows the window without
 saving its size, and `MARKVIEW_SETTINGS=<path>` captures the Settings window, on the
 pane `MARKVIEW_SETTINGS_PANE` counts to from 0.
