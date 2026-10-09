@@ -63,6 +63,9 @@ final class MarkdownDocument: NSDocument {
 
     override func save(to url: URL, ofType typeName: String, for saveOperation: NSDocument.SaveOperationType,
                        completionHandler: @escaping ((any Error)?) -> Void) {
+        if saveOperation == .autosaveElsewhereOperation {
+            return write(to: keptAside(url), ofType: typeName, for: saveOperation, completionHandler: completionHandler)
+        }
         let savesFile = saveOperation == .saveOperation || saveOperation == .saveAsOperation
         guard savesFile, format.encode(markdown) == nil else {
             return write(to: url, ofType: typeName, for: saveOperation, completionHandler: completionHandler)
@@ -103,6 +106,22 @@ final class MarkdownDocument: NSDocument {
             }
             completionHandler(error)
         }
+    }
+
+    /// Where unsaved edits are kept: the system's autosave folder. AppKit would keep those of a
+    /// document that has a file beside it, as “Name (Autosaved).md”, where they would turn up in
+    /// the folder, and in git.
+    private func keptAside(_ url: URL) -> URL {
+        let files = FileManager.default
+        guard let folder = try? files.url(for: .autosavedInformationDirectory, in: .userDomainMask, appropriateFor: nil, create: true),
+              url.deletingLastPathComponent().resolvingSymlinksInPath() != folder.resolvingSymlinksInPath() else { return url }
+        let name = url.deletingPathExtension().lastPathComponent
+        var aside = folder.appendingPathComponent(url.lastPathComponent), number = 2
+        while files.fileExists(atPath: aside.path) {
+            aside = folder.appendingPathComponent("\(name) \(number)").appendingPathExtension(url.pathExtension)
+            number += 1
+        }
+        return aside
     }
 
     // A new document's file is Markdown, whether or not the system knows the type's extension.
@@ -157,6 +176,9 @@ final class MarkdownDocument: NSDocument {
 
     func apply(_ theme: Theme) { highlighter?.activate(theme: theme) }
 
+    /// Colours the lines just edited, once the edit is done (see SourceHighlighter.colourEdits).
+    func colourEdits() { highlighter?.colourEdits() }
+
     /// Puts new text in place of the old, as when the file is read again. In an editor only the part
     /// that differs is replaced, so the selection and the place in the text stay where they were.
     private func setText(_ new: String) {
@@ -174,6 +196,7 @@ final class MarkdownDocument: NSDocument {
         }
         let changed = NSRange(location: prefix, length: old.length - prefix - suffix)
         source.replaceCharacters(in: changed, with: replacement.substring(with: NSRange(location: prefix, length: replacement.length - prefix - suffix)))
+        colourEdits()
         // The edits the undo list holds were made to the text replaced.
         undoManager?.removeAllActions()
     }

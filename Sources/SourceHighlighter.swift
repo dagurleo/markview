@@ -18,6 +18,9 @@ final class SourceHighlighter: NSObject, NSTextStorageDelegate {
     /// Until an editor shows the text, nothing is coloured.
     private(set) var isActive = false
     private weak var storage: NSTextStorage?
+    /// Lines edited since they were last coloured (see colourEdits).
+    private var linesToColour: NSRange?
+    private var colourScheduled = false
     /// Where code may need colouring again: what was edited since it was last coloured.
     private var codeToColour: NSRange?
     private var pendingCode: DispatchWorkItem?
@@ -53,15 +56,49 @@ final class SourceHighlighter: NSObject, NSTextStorageDelegate {
     /// Marks text that is not prose, such as code, addresses and tags, which spelling leaves alone.
     static let notProse = NSAttributedString.Key("MarkviewNotProse")
 
+    /// Whether a line is inside a fenced code block, front matter, a `$$` formula or an HTML
+    /// comment, where what is typed is not Markdown: whether the line above leaves it in one.
+    static func isInsideBlock(lineStartingAt location: Int, of storage: NSTextStorage) -> Bool {
+        guard location > 0, location <= storage.length else { return false }
+        return (storage.attribute(stateKey, at: location - 1, effectiveRange: nil) as? Int ?? 0) != 0
+    }
+
     // MARK: Editing
 
-    // Before the text storage fixes its fonts, which gives characters the code font lacks, such as
-    // emoji, a font that has them: colouring after that would take those fonts away again.
+    // The lines edited are only noted here, while the text storage processes the edit. Colouring
+    // them now would widen what it counts as edited, and text views put the insertion point at the
+    // end of that: on the next line, at every keystroke.
     func textStorage(_ textStorage: NSTextStorage, willProcessEditing editedMask: NSTextStorageEditActions,
                      range editedRange: NSRange, changeInLength delta: Int) {
         guard editedMask.contains(.editedCharacters), isActive else { return }
-        highlightLines(in: editedRange, of: textStorage, untilSettled: true)
+        linesToColour = Self.pending(linesToColour, after: editedRange, changeInLength: delta)
         noteCodeEdited(editedRange, changeInLength: delta)
+        guard !colourScheduled else { return }
+        colourScheduled = true
+        // A text view's edits are coloured as soon as it has made them (see SourceTextView.onEdit).
+        DispatchQueue.main.async { [weak self] in self?.colourEdits() }
+    }
+
+    /// Colours the lines edited since they were last coloured, once the edit is done, as a change
+    /// of its own. The text storage fixes the fonts of what it colours, as it does for what is
+    /// typed, so that characters the code font lacks, such as emoji, keep a font that has them.
+    func colourEdits() {
+        colourScheduled = false
+        guard let range = linesToColour, let storage else { return }
+        linesToColour = nil
+        let start = min(range.location, storage.length)
+        storage.beginEditing()
+        highlightLines(in: NSRange(location: start, length: min(NSMaxRange(range), storage.length) - start), of: storage, untilSettled: true)
+        storage.endEditing()
+    }
+
+    /// A range still to be dealt with, moved along by an edit, and taking it in.
+    private static func pending(_ pending: NSRange?, after edit: NSRange, changeInLength delta: Int) -> NSRange {
+        guard var pending else { return edit }
+        let editStart = edit.location, previousEnd = edit.location + edit.length - delta
+        if pending.location >= previousEnd { pending.location += delta }
+        else if NSMaxRange(pending) > editStart { pending.length = max(NSMaxRange(pending) + delta, editStart) - pending.location }
+        return NSUnionRange(pending, edit)
     }
 
     func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
@@ -324,14 +361,7 @@ final class SourceHighlighter: NSObject, NSTextStorageDelegate {
 
     /// An edit moves what is still to be coloured, and adds to it.
     private func noteCodeEdited(_ range: NSRange, changeInLength delta: Int) {
-        if var pending = codeToColour {
-            let editStart = range.location, previousEnd = range.location + range.length - delta
-            if pending.location >= previousEnd { pending.location += delta }
-            else if NSMaxRange(pending) > editStart { pending.length = max(NSMaxRange(pending) + delta, editStart) - pending.location }
-            codeToColour = NSUnionRange(pending, range)
-        } else {
-            codeToColour = range
-        }
+        codeToColour = Self.pending(codeToColour, after: range, changeInLength: delta)
         colourCodeSoon(after: 0.25)
     }
 

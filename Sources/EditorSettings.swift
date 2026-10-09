@@ -6,8 +6,8 @@ struct EditorSettings: Equatable {
     enum Key {
         static let font = "editorFont", lineNumbers = "editorLineNumbers", wraps = "editorWraps", indentWithTabs = "editorIndentWithTabs",
                    indentWidth = "editorIndentWidth", spelling = "editorSpelling", smartQuotes = "editorSmartQuotes",
-                   smartDashes = "editorSmartDashes", textReplacement = "editorTextReplacement"
-        static let all = [font, lineNumbers, wraps, indentWithTabs, indentWidth, spelling, smartQuotes, smartDashes, textReplacement]
+                   smartDashes = "editorSmartDashes", textReplacement = "editorTextReplacement", slashMenu = "editorSlashMenu"
+        static let all = [font, lineNumbers, wraps, indentWithTabs, indentWidth, spelling, smartQuotes, smartDashes, textReplacement, slashMenu]
     }
 
     /// A font family, or "" for the code font the page uses.
@@ -22,6 +22,8 @@ struct EditorSettings: Equatable {
     var smartQuotes = false
     var smartDashes = false
     var textReplacement = false
+    /// Whether typing `/` at the start of a line or after a space opens a menu of things to insert.
+    var slashMenu = true
 
     static var current: EditorSettings {
         let defaults = Settings.defaults
@@ -37,6 +39,7 @@ struct EditorSettings: Equatable {
         settings.smartQuotes = flag(Key.smartQuotes, settings.smartQuotes)
         settings.smartDashes = flag(Key.smartDashes, settings.smartDashes)
         settings.textReplacement = flag(Key.textReplacement, settings.textReplacement)
+        settings.slashMenu = flag(Key.slashMenu, settings.slashMenu)
         return settings
     }
 

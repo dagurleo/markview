@@ -17,6 +17,10 @@
   and a Format menu marks text bold, italic, struck through, as code or as a link.
 - Line numbers (View > Show Line Numbers, ⌥⌘L) and Settings > Editor: font, line
   numbers, wrapping, tabs or spaces, spelling and substitutions, kept for every window.
+- Typing `/` in the editor opens a menu of things to insert: headings, lists, code blocks
+  by language, tables, links, pictures, math, Mermaid diagrams, callouts, footnotes and
+  more. In a table, Tab moves from cell to cell and Return adds a row, with the columns
+  lined up. Pasting an address over selected text makes it a link.
 - A short file in Latin-1 is no longer read as UTF-8 with its accented letters replaced.
 
 ## 0.4.0

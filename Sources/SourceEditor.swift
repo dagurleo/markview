@@ -56,6 +56,9 @@ final class SourceEditor: NSView, NSTextViewDelegate {
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.delegate = self
         textView.onTypingSettingChange = { [weak self] in self?.keepTypingSettings() }
+        // The edited lines are coloured once the text view is done with the edit.
+        textView.onEdit = { [weak self] in self?.document?.colourEdits() }
+        textView.folder = { [weak self] in self?.document.flatMap { $0.fileURL?.deletingLastPathComponent() ?? $0.draftFolder } }
 
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
@@ -78,6 +81,7 @@ final class SourceEditor: NSView, NSTextViewDelegate {
         scrollView.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main) { [weak self] _ in
             self?.lineNumbers.needsDisplay = true
+            self?.textView.slashMenuFollows()
             self?.onScroll()
         }
         bar.isHidden = true
@@ -111,6 +115,7 @@ final class SourceEditor: NSView, NSTextViewDelegate {
     /// are no longer undone through this view, which may go on to show another document.
     func leave() {
         guard let document, let layout = textView.layoutManager else { return }
+        textView.closeSlashMenu()
         document.undoManager?.removeAllActions(withTarget: textView)
         // A text storage keeps its layout managers, and would go on laying this one out.
         layout.textStorage?.removeLayoutManager(layout)
@@ -127,10 +132,14 @@ final class SourceEditor: NSView, NSTextViewDelegate {
         textObserver = nil
         lineStarts = nil
         guard let storage else { return }
-        textObserver = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil) { [weak self] _ in
+        textObserver = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil) { [weak self, weak storage] _ in
             MainActor.assumeIsolated {
-                self?.lineStarts = nil
-                self?.lineNumbers.textChanged()
+                guard let self else { return }
+                self.lineStarts = nil
+                self.lineNumbers.textChanged()
+                if let storage, storage.editedMask.contains(.editedCharacters) {
+                    self.textView.textEdited(storage.editedRange, changeInLength: storage.changeInLength)
+                }
             }
         }
     }
@@ -233,6 +242,7 @@ final class SourceEditor: NSView, NSTextViewDelegate {
         let fontChanged = settings.font != self.settings.font
         self.settings = settings
         textView.indent = settings.indent
+        textView.offersSlashMenu = settings.slashMenu
         textView.isContinuousSpellCheckingEnabled = settings.spelling
         textView.isAutomaticQuoteSubstitutionEnabled = settings.smartQuotes
         textView.isAutomaticDashSubstitutionEnabled = settings.smartDashes

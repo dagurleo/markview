@@ -87,6 +87,15 @@ Markview menu checks at any time. Version 0.1.0 predates this and is updated by 
   (⌘B), italic (⌘I), struck through (⇧⌘X), code (⌘E) or a link (⌘K). View > Show Line
   Numbers (⌥⌘L), and Settings > Editor chooses the editor's font, line numbers,
   wrapping, what Tab inserts, and spelling and substitutions.
+- Typing `/` at the start of a line or after a space opens a menu of things to insert:
+  headings, lists, a quote, a code block in a language you choose, a table, a link, a
+  picture, a divider, math, a Mermaid diagram, a callout, a footnote or front matter.
+  Typing after the slash narrows it (`/table`, `/swift`, `/warning`); Return or Tab
+  inserts, and Escape leaves what you typed. The first place to fill in is selected, and
+  Tab goes on to the next. In a table, Tab and ⇧Tab go from cell to cell and Return
+  starts a row, lining the columns up; Tab on a line like `| Name | Age |` makes it a
+  table. Pasting an address over selected text makes it a link. Settings > Editor can
+  turn the slash menu off.
 - A sidebar beside the page (View > Show Sidebar, ⌃⌘S) with the document's headings,
   marking the section being read; clicking a heading goes to it.
 - Opens folders too (File > Open…, the `markview` command, or a folder dropped on the

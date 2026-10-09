@@ -168,6 +168,7 @@ private struct EditorPane: View {
     @AppStorage(EditorSettings.Key.smartQuotes) private var smartQuotes = EditorSettings().smartQuotes
     @AppStorage(EditorSettings.Key.smartDashes) private var smartDashes = EditorSettings().smartDashes
     @AppStorage(EditorSettings.Key.textReplacement) private var textReplacement = EditorSettings().textReplacement
+    @AppStorage(EditorSettings.Key.slashMenu) private var slashMenu = EditorSettings().slashMenu
     @State private var families = FontFamilies()
 
     var body: some View {
@@ -207,6 +208,10 @@ private struct EditorPane: View {
                 Toggle("Smart quotes", isOn: $smartQuotes)
                 Toggle("Smart dashes", isOn: $smartDashes)
                 Toggle("Text replacement", isOn: $textReplacement)
+                Toggle(isOn: $slashMenu) {
+                    Text("Slash menu")
+                    Text("Type / at the start of a line or after a space to insert a heading, list, table, code block and more")
+                }
             }
             HStack {
                 Text("Spelling leaves code, addresses and tags alone.").font(.callout).foregroundStyle(.secondary)
