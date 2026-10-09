@@ -1,6 +1,6 @@
 # Changes
 
-## 0.5.0 (not released yet)
+## 0.5.0
 
 - An editor beside the page: View > Show Editor (⌘U) opens the Markdown as written,
   coloured in the theme, and the page follows a moment after you stop typing. Documents
@@ -30,6 +30,8 @@
   documents and folders opened lately. Turned off in Settings > General, Markview quits
   when its last window closes, as before.
 - A short file in Latin-1 is no longer read as UTF-8 with its accented letters replaced.
+- Coming from 0.3.0 or earlier? Version 0.4.0 added folders, Back and Forward between
+  documents, and pictures and diagrams shown full size; its notes are on the 0.4.0 release.
 
 ## 0.4.0
 
