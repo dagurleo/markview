@@ -9,11 +9,12 @@ type Tab = "files" | "contents"
 
 /** Files and Contents, as in Markview's sidebar: the site's pages, and the open page's headings. */
 export function Sidebar({
-  current,
+  headings,
   open,
   onShowShortcuts,
 }: {
-  current?: (typeof files)[number]
+  /** The open page's headings, as edited if it has been. */
+  headings: Page["headings"]
   open: boolean
   onShowShortcuts: () => void
 }) {
@@ -63,7 +64,7 @@ export function Sidebar({
           ))}
         </ul>
       ) : (
-        <Outline headings={current?.page.headings ?? []} />
+        <Outline headings={headings} />
       )}
       <button type="button" className="shortcuts-button" onClick={onShowShortcuts}>
         Keyboard shortcuts <kbd>?</kbd>

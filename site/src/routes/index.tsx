@@ -8,5 +8,5 @@ const readme = files[0]
 
 export const Route = createFileRoute("/")({
   head: () => pageHead(readme),
-  component: () => <Article page={readme.page} />,
+  component: () => <Article page={readme.page} path={readme.path} />,
 })
