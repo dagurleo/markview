@@ -2,6 +2,8 @@
 
 Press ⌘U and the Markdown opens in an editor beside the page. The page follows a moment after you stop typing, and the two scroll together. Documents always open as pages to read; File > New (⌘N) starts one with the editor open.
 
+You can try it on this site: press Edit at the top, or ⌘U, and change any page. Nothing you write here is saved.
+
 - Nothing is written until you save (⌘S). Unsaved edits are kept aside every few seconds, and come back after a crash.
 - Headings, emphasis, links and lists are coloured as you type, and code blocks by their language.
 - Return carries a list or a quote on to the next line, and Tab nests a list item under the one above.

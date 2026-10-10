@@ -15,6 +15,12 @@ declare module "*?markdown" {
   export default page
 }
 
+// The Markdown of a page, for the editor (plugins/markdown.ts).
+declare module "*?source" {
+  const source: string
+  export default source
+}
+
 // Markview's themes, from Native/Palette.swift (plugins/palettes.ts).
 declare module "virtual:palettes" {
   import type { Palette } from "@/lib/palettes"

@@ -9,7 +9,7 @@
 ![Markview showing a project folder, with its files in the sidebar](/shots/hero-github-light.webp#gh-light-mode-only)
 ![Markview showing a project folder, with its files in the sidebar](/shots/hero-github-dark.webp#gh-dark-mode-only)
 
-Open a `.md` file and read it the way GitHub shows it: tables, code, maths and Mermaid diagrams, drawn without a web view. Press ⌘U to write it in an [editor](Editor.md) beside the page, which follows as you type. Markview follows the file as it changes on disk, draws the Quick Look preview when you press Space in Finder, and keeps itself up to date.
+Open a `.md` file and read it the way GitHub shows it: tables, code, maths and Mermaid diagrams, drawn without a web view. Press ⌘U to write it in an [editor](Editor.md) beside the page, which follows as you type; ⌘U works on this site too. Markview follows the file as it changes on disk, draws the Quick Look preview when you press Space in Finder, and keeps itself up to date.
 
 It installs with Homebrew too:
 

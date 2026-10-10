@@ -16,11 +16,17 @@ bun run deploy    # builds, then runs wrangler deploy
 - `content/` holds the pages as Markdown. A file's name is its name in the sidebar and its
   address: `Quick Look.md` is `/quick-look`. List a new file in `src/pages.ts` to put it in the
   sidebar. The changelog and licence pages are the repository's own `CHANGELOG.md` and `LICENSE`.
-- `plugins/markdown.ts` turns the Markdown into HTML at build time: GitHub's alerts, heading
-  anchors, highlight.js classes (coloured per theme in `src/styles.css`, as `HighlightEngine.swift`
-  colours them), a copy button on each code block, and links between `.md` files turned into the
-  site's links. `%VERSION%` and `%DOWNLOAD%` become the version in `../Info.plist` and the address
-  of its disk image, so the download links follow each release.
+- `src/lib/markdown.ts` turns the Markdown into HTML, and `plugins/markdown.ts` runs it at build
+  time: GitHub's alerts, heading anchors, highlight.js classes (coloured per theme in
+  `src/styles.css`, as `HighlightEngine.swift` colours them), a copy button on each code block,
+  and links between `.md` files turned into the site's links. `%VERSION%` and `%DOWNLOAD%` become
+  the version in `../Info.plist` and the address of its disk image, so the download links follow
+  each release.
+- Edit (or E, or ⌘U) opens an editor beside the page, as in the app. `src/lib/editor.ts` is
+  CodeMirror, coloured with the theme's roles as `SourceHighlighter.swift` colours the app's
+  editor. It loads, with the renderer above, only when the editor first opens, and the page's
+  Markdown comes from an import ending in `?source`. Edits last until the tab is closed or
+  reloaded (`src/lib/edits.ts`); nothing is saved.
 - `plugins/palettes.ts` reads `../Native/Palette.swift`, so the themes are the app's own. A
   picture can show in one appearance only, as on GitHub: end its address with
   `#gh-light-mode-only` or `#gh-dark-mode-only`.

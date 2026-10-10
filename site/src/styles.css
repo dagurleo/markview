@@ -111,6 +111,20 @@ a:hover {
   background: #28c840;
 }
 
+/* An edited document's window has a dot in its close button. */
+.lights[data-edited="true"] i:first-child {
+  display: grid;
+  place-items: center;
+}
+
+.lights[data-edited="true"] i:first-child::after {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.5);
+}
+
 .sidebar-toggle {
   display: inline-flex;
   align-items: center;
@@ -149,7 +163,8 @@ a:hover {
   font-weight: 600;
 }
 
-.title .folder {
+.title .folder,
+.title .edited {
   color: var(--muted);
 }
 
@@ -158,6 +173,7 @@ a:hover {
 }
 
 /* The title bar's buttons share one height and outline, so they sit as a set. */
+.editor-toggle,
 .theme-button,
 .github,
 .download {
@@ -206,6 +222,40 @@ a:hover {
 
 .theme-button svg {
   color: var(--muted);
+}
+
+/* Edit, outlined like the theme button, stays pressed in while the editor is open. */
+.editor-toggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 10px;
+  border-color: color-mix(in srgb, var(--text) 42%, transparent);
+  background: var(--background);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.editor-toggle:hover {
+  background: color-mix(in srgb, var(--text) 5%, var(--background));
+}
+
+.editor-toggle[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--text) 13%, var(--background));
+}
+
+.editor-toggle svg {
+  color: var(--muted);
+}
+
+.editor-toggle[aria-pressed="true"] svg {
+  color: var(--text);
+}
+
+.editor-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .swatch {
@@ -490,10 +540,18 @@ a:hover {
 
 /* The sidebar */
 
+/* The editor's column is half the room beside the sidebar until its divider is dragged
+   (--editor-width), and leaves the page at least 320 pixels. */
 .body {
+  --sidebar-width: 248px;
+  --editor-column: clamp(
+    280px,
+    var(--editor-width, calc((100% - var(--sidebar-width)) / 2)),
+    calc(100% - var(--sidebar-width) - 320px)
+  );
   display: grid;
   flex: 1;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
 }
 
 .sidebar {
@@ -511,11 +569,20 @@ a:hover {
 /* Hidden with S or ⌃⌘S on wide screens; narrow screens slide it in and out instead. */
 @media (min-width: 821px) {
   .body[data-sidebar="hidden"] {
+    --sidebar-width: 0px;
     grid-template-columns: minmax(0, 1fr);
   }
 
   .body[data-sidebar="hidden"] .sidebar {
     display: none;
+  }
+
+  .body[data-editor="shown"] {
+    grid-template-columns: var(--sidebar-width) var(--editor-column) minmax(0, 1fr);
+  }
+
+  .body[data-sidebar="hidden"][data-editor="shown"] {
+    grid-template-columns: var(--editor-column) minmax(0, 1fr);
   }
 }
 
@@ -620,6 +687,80 @@ a:hover {
   margin: 4px 8px;
   color: var(--muted);
   font-size: 13px;
+}
+
+/* The editor, beside the page as in Markview: it scrolls on its own, under the title bar */
+
+.editor {
+  position: sticky;
+  top: var(--titlebar);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: calc(100vh - var(--titlebar));
+  height: calc(100dvh - var(--titlebar));
+  border-right: 1px solid var(--border);
+}
+
+.editor-host {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Where Markview shows its bar for a file changed on disk, the site says its edits aren't saved. */
+.editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 6px 10px 6px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--subtle);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.editor-bar button {
+  margin-left: auto;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--text) 30%, transparent);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--text);
+  font: 500 12px var(--sans);
+  cursor: pointer;
+}
+
+.editor-bar button:hover:enabled {
+  background: color-mix(in srgb, var(--text) 5%, var(--background));
+}
+
+.editor-bar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The divider is the editor's border; a wider strip over it takes the drag. */
+.divider {
+  position: absolute;
+  top: 0;
+  right: -5px;
+  bottom: 0;
+  z-index: 5;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.divider:focus-visible {
+  outline: none;
+  background: linear-gradient(var(--link), var(--link)) center / 2px 100% no-repeat;
+}
+
+/* With the editor open the page follows it, so the browser shouldn't also hold its place. */
+.body[data-editor="shown"] .page {
+  overflow-anchor: none;
 }
 
 /* The page, drawn as Markview draws Markdown: GitHub's sizes and spacing, the theme's colours */
@@ -1045,16 +1186,31 @@ a:hover {
   .page {
     padding: 28px 18px 80px;
   }
+
+  /* The editor takes the page's place, and Edit switches between them. */
+  .body[data-editor="shown"] .page {
+    display: none;
+  }
+
+  .editor {
+    border-right: 0;
+  }
+
+  .divider {
+    display: none;
+  }
 }
 
 @media (max-width: 560px) {
   .for-mac,
   .theme-name,
-  .github-label {
+  .github-label,
+  .editor-toggle-label {
     display: none;
   }
 
-  .github {
+  .github,
+  .editor-toggle {
     padding: 0 8px;
   }
 
@@ -1064,6 +1220,11 @@ a:hover {
 }
 
 @media (max-width: 480px) {
+  .titlebar {
+    gap: 6px;
+  }
+
+  .title svg,
   .title .folder {
     display: none;
   }

@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react"
 
 // The site's keyboard shortcuts. Where Markview has one for the same thing, the site takes it:
-// ⌥⌘↓ and ⌥⌘↑ for the next and previous heading, ⌃⌘S for the sidebar, and the browser's own
-// ⌘[ and ⌘] for Back and Forward. The rest are single keys, which work unless a field has focus.
+// ⌥⌘↓ and ⌥⌘↑ for the next and previous heading, ⌃⌘S for the sidebar, ⌘U for the editor, and the
+// browser's own ⌘[ and ⌘] for Back and Forward. The rest are single keys, which work unless a
+// field or the editor has focus.
 
 export type ShortcutActions = {
   openFile: (index: number) => void
@@ -12,6 +13,9 @@ export type ShortcutActions = {
   flipAppearance: () => void
   openThemeMenu: () => void
   toggleSidebar: () => void
+  toggleEditor: () => void
+  /** Answers ⌘S, returning false to leave it to the browser. */
+  save: () => boolean
   toggleHelp: () => void
 }
 
@@ -64,6 +68,22 @@ export const shortcutGroups: { title: string; rows: ShortcutRow[] }[] = [
     ],
   },
   {
+    title: "Editor",
+    rows: [
+      { label: "Show or hide the editor", keys: [[["E"]], [["⌘", "U"]]] },
+      {
+        label: "Bold, italic or code",
+        keys: [
+          [
+            ["⌘", "B"],
+            ["⌘", "I"],
+            ["⌘", "E"],
+          ],
+        ],
+      },
+    ],
+  },
+  {
     title: "Window",
     rows: [
       { label: "Show or hide the sidebar", keys: [[["S"]], [["⌃", "⌘", "S"]]] },
@@ -85,12 +105,21 @@ export function useShortcuts(actions: ShortcutActions) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || isTyping(event.target)) return
+      if (event.defaultPrevented || event.isComposing) return
       const act = latest.current
-      const { metaKey: command, altKey: option, ctrlKey: control, key } = event
+      const { metaKey: command, altKey: option, ctrlKey: control, shiftKey: shift, key } = event
       let action: (() => void) | undefined
 
-      if (command && option && !control && key === "ArrowDown") action = () => act.stepHeading(1)
+      // ⌘S and ⌘U work from inside the editor too.
+      const commandOnly = command && !option && !control && !shift
+      if (commandOnly && key.toLowerCase() === "s") {
+        if (act.save()) event.preventDefault()
+        return
+      }
+      if (commandOnly && key.toLowerCase() === "u") action = act.toggleEditor
+      else if (isTyping(event.target)) return
+      else if (command && option && !control && key === "ArrowDown")
+        action = () => act.stepHeading(1)
       else if (command && option && !control && key === "ArrowUp")
         action = () => act.stepHeading(-1)
       else if (command && control && !option && key.toLowerCase() === "s")
@@ -108,6 +137,7 @@ export function useShortcuts(actions: ShortcutActions) {
             a: act.flipAppearance,
             ",": act.openThemeMenu,
             s: act.toggleSidebar,
+            e: act.toggleEditor,
             "?": act.toggleHelp,
           }
           action = single[key]

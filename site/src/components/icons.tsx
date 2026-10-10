@@ -62,3 +62,18 @@ export function SidebarIcon() {
     </svg>
   )
 }
+
+/** A pencil, for the button that shows the editor. */
+export function EditIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+      <path
+        d="M9.6 1.9a1.4 1.4 0 0 1 2 0l.5.5a1.4 1.4 0 0 1 0 2L5 11.5l-3.2.7.7-3.2 7.1-7.1Z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+      <path d="M8.5 3 11 5.5" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  )
+}

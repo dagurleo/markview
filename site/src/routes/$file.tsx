@@ -23,5 +23,5 @@ export const Route = createFileRoute("/$file")({
 function FilePage() {
   const { path } = Route.useLoaderData()
   const file = fileAt(path)
-  return file ? <Article page={file.page} /> : null
+  return file ? <Article page={file.page} path={file.path} /> : null
 }
